@@ -19,6 +19,12 @@ from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
+hasCuda = torch.cuda.is_available()
+
+def move_to_device(obj):
+    if hasCuda:
+        return obj.cuda()
+    return obj.cpu()
 
 # Part of the code is referred from: https://github.com/floodsung/LearningToCompare_FSL
 
@@ -71,12 +77,12 @@ def test_one_epoch(args, net, test_loader):
     eulers_ba = []
 
     for src, target, rotation_ab, translation_ab, rotation_ba, translation_ba, euler_ab, euler_ba in tqdm(test_loader):
-        src = src.cuda()
-        target = target.cuda()
-        rotation_ab = rotation_ab.cuda()
-        translation_ab = translation_ab.cuda()
-        rotation_ba = rotation_ba.cuda()
-        translation_ba = translation_ba.cuda()
+        src = move_to_device(src)
+        target = move_to_device(target)
+        rotation_ab = move_to_device(rotation_ab)
+        translation_ab = move_to_device(translation_ab)
+        rotation_ba = move_to_device(rotation_ba)
+        translation_ba = move_to_device(translation_ba)
 
         batch_size = src.size(0)
         num_examples += batch_size
@@ -143,8 +149,10 @@ def test_one_epoch(args, net, test_loader):
            translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba
 
 
-def train_one_epoch(args, net, train_loader, opt):
+def train_one_epoch(args, net, train_loader, opt, scheduler):
     net.train()
+
+    print(f'[train_one_epoch] after net.train()')
 
     mse_ab = 0
     mae_ab = 0
@@ -168,12 +176,12 @@ def train_one_epoch(args, net, train_loader, opt):
     eulers_ba = []
 
     for src, target, rotation_ab, translation_ab, rotation_ba, translation_ba, euler_ab, euler_ba in tqdm(train_loader):
-        src = src.cuda()
-        target = target.cuda()
-        rotation_ab = rotation_ab.cuda()
-        translation_ab = translation_ab.cuda()
-        rotation_ba = rotation_ba.cuda()
-        translation_ba = translation_ba.cuda()
+        src = move_to_device(src)
+        target = move_to_device(target)
+        rotation_ab = move_to_device(rotation_ab)
+        translation_ab = move_to_device(translation_ab)
+        rotation_ba = move_to_device(rotation_ba)
+        translation_ba = move_to_device(translation_ba)
 
         batch_size = src.size(0)
         opt.zero_grad()
@@ -211,6 +219,7 @@ def train_one_epoch(args, net, train_loader, opt):
 
         loss.backward()
         opt.step()
+        scheduler.step()
         total_loss += loss.item() * batch_size
 
         if args.cycle:
@@ -317,12 +326,11 @@ def train(args, net, train_loader, test_loader, boardio, textio):
     best_test_t_mae_ba = np.inf
 
     for epoch in range(args.epochs):
-        scheduler.step()
         train_loss, train_cycle_loss, \
         train_mse_ab, train_mae_ab, train_mse_ba, train_mae_ba, train_rotations_ab, train_translations_ab, \
         train_rotations_ab_pred, \
         train_translations_ab_pred, train_rotations_ba, train_translations_ba, train_rotations_ba_pred, \
-        train_translations_ba_pred, train_eulers_ab, train_eulers_ba = train_one_epoch(args, net, train_loader, opt)
+        train_translations_ba_pred, train_eulers_ab, train_eulers_ba = train_one_epoch(args, net, train_loader, opt, scheduler)
         test_loss, test_cycle_loss, \
         test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
         test_rotations_ab_pred, \
@@ -596,7 +604,11 @@ def main():
         raise Exception("not implemented")
 
     if args.model == 'dcp':
-        net = DCP(args).cuda()
+        net = None
+        if hasCuda:
+            net = DCP(args).cuda()
+        else:
+            net = DCP(args)
         if args.eval:
             if args.model_path is '':
                 model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'
