@@ -143,7 +143,7 @@ def test_one_epoch(args, net, test_loader):
            translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba
 
 
-def train_one_epoch(args, net, train_loader, opt):
+def train_one_epoch(args, net, train_loader, opt, scheduler):
     net.train()
 
     mse_ab = 0
@@ -211,6 +211,7 @@ def train_one_epoch(args, net, train_loader, opt):
 
         loss.backward()
         opt.step()
+        scheduler.step()
         total_loss += loss.item() * batch_size
 
         if args.cycle:
@@ -317,12 +318,11 @@ def train(args, net, train_loader, test_loader, boardio, textio):
     best_test_t_mae_ba = np.inf
 
     for epoch in range(args.epochs):
-        scheduler.step()
         train_loss, train_cycle_loss, \
         train_mse_ab, train_mae_ab, train_mse_ba, train_mae_ba, train_rotations_ab, train_translations_ab, \
         train_rotations_ab_pred, \
         train_translations_ab_pred, train_rotations_ba, train_translations_ba, train_rotations_ba_pred, \
-        train_translations_ba_pred, train_eulers_ab, train_eulers_ba = train_one_epoch(args, net, train_loader, opt)
+        train_translations_ba_pred, train_eulers_ab, train_eulers_ba = train_one_epoch(args, net, train_loader, opt, scheduler)
         test_loss, test_cycle_loss, \
         test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
         test_rotations_ab_pred, \
@@ -514,6 +514,8 @@ def train(args, net, train_loader, test_loader, boardio, textio):
 
 def main():
     parser = argparse.ArgumentParser(description='Point Cloud Registration')
+    parser.add_argument('--data_size', type=int, default=None, metavar='N',
+                    help = 'Data size to use in training')
     parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
                         help='Name of the experiment')
     parser.add_argument('--model', type=str, default='dcp', metavar='N',
@@ -538,7 +540,7 @@ def main():
                         help='Num of dimensions of fc in transformer')
     parser.add_argument('--dropout', type=float, default=0.0, metavar='N',
                         help='Dropout ratio in transformer')
-    parser.add_argument('--batch_size', type=int, default=32, metavar='batch_size',
+    parser.add_argument('--batch_size', type=int, default=16, metavar='batch_size',
                         help='Size of batch)')
     parser.add_argument('--test_batch_size', type=int, default=10, metavar='batch_size',
                         help='Size of batch)')
@@ -586,11 +588,11 @@ def main():
     if args.dataset == 'modelnet40':
         train_loader = DataLoader(
             ModelNet40(num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
-                       unseen=args.unseen, factor=args.factor),
+                       unseen=args.unseen, factor=args.factor, data_size=args.data_size),
             batch_size=args.batch_size, shuffle=True, drop_last=True)
         test_loader = DataLoader(
             ModelNet40(num_points=args.num_points, partition='test', gaussian_noise=args.gaussian_noise,
-                       unseen=args.unseen, factor=args.factor),
+                       unseen=args.unseen, factor=args.factor, data_size=args.data_size),
             batch_size=args.test_batch_size, shuffle=False, drop_last=False)
     else:
         raise Exception("not implemented")
@@ -598,7 +600,7 @@ def main():
     if args.model == 'dcp':
         net = DCP(args).cuda()
         if args.eval:
-            if args.model_path is '':
+            if args.model_path == '':
                 model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'
             else:
                 model_path = args.model_path
