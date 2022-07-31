@@ -608,7 +608,15 @@ def main():
             if not os.path.exists(model_path):
                 print("can't find pretrained model")
                 return
+            print(f'model_path={model_path}')
             net.load_state_dict(torch.load(model_path), strict=False)
+        else:
+            if args.model_path != '':
+                if not os.path.exists(args.model_path):
+                    print("can't find pretrained model")
+                    return
+                print(f'model_path={args.model_path}')
+                net.load_state_dict(torch.load(args.model_path), strict=False)            
         if torch.cuda.device_count() > 1:
             net = nn.DataParallel(net)
             print("Let's use", torch.cuda.device_count(), "GPUs!")
