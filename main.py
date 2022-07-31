@@ -82,6 +82,10 @@ def test_one_epoch(args, net, test_loader):
         num_examples += batch_size
         rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
 
+
+        print(f'target={rotation_ab}\npred={rotation_ab_pred}')
+
+
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
         translations_ab.append(translation_ab.detach().cpu().numpy())
@@ -179,6 +183,8 @@ def train_one_epoch(args, net, train_loader, opt, scheduler):
         opt.zero_grad()
         num_examples += batch_size
         rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
+
+        print(f'target={rotation_ab}\npred={rotation_ab_pred}')
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())

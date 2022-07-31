@@ -3,21 +3,19 @@
 
 
 import os
-import sys
-import glob
-import h5py
 import copy
 import math
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
+from difficp.utils.geometry_utils import rotation_matrix_to_euler_angles
 from util import quat2mat
 
 torch.cuda.empty_cache()
 
 from difficp import ICP6DoF
+
+from difficp.utils.geometry_utils import euler_angles_to_rotation_matrix
 
 # Part of the code is referred from: http://nlp.seas.harvard.edu/2018/04/03/attention.html#positional-encoding
 
@@ -464,14 +462,15 @@ class DCP(nn.Module):
         batch_size = src.size()[0]
         rotations, translations = [], []
         icp = self.icp if full_icp else self.difficp
+        print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
         for i in range(batch_size):
             icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
             icp_init_pose[:3, :3] = rotation[i]
             icp_init_pose[:3, 3] = translation[i]
             try:
                 pred_pose = icp(
-                    src.squeeze().transpose(0, 1),
-                    tgt.squeeze().transpose(0, 1),
+                    src[i].transpose(0, 1),
+                    tgt[i].transpose(0, 1),
                     icp_init_pose,
                 )[0]
                 rotations.append(pred_pose[:3, :3])
@@ -506,7 +505,10 @@ class DCP(nn.Module):
         #     src, tgt, rotation_ab, translation_ab
         # )
 
+        print(f'euler={rotation_matrix_to_euler_angles(rotation_ab)}')
+
         if not self.training:
+            print(f'comes here?')
             rotation_ab, translation_ab = self._refine_with_icp(
                 src, tgt, rotation_ab, translation_ab, full_icp=True,
             )
