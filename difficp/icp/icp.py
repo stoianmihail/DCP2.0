@@ -205,6 +205,8 @@ class ICP(ABC):
         :param cam_pose: camera pose (extrinsics) matrix, shape 4x4
         :return: best transformation between source and target (shape domain specific)
         """
+        # print(f'init_pose.requires_grad={init_pose.requires_grad}')
+
         sources, targets, source_normals, target_normals, pose, mse = self.initialize(
             sources, targets, source_normals, target_normals, init_pose
         )

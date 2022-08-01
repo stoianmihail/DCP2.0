@@ -58,16 +58,39 @@ def jitter_pointcloud(pointcloud, sigma=0.01, clip=0.05):
     pointcloud += np.clip(sigma * np.random.randn(N, C), -1 * clip, clip)
     return pointcloud
 
+from hypericp import compute_components_one
+
+def check(data_type, pc):
+    (_, S) = compute_components_one(jitter_pointcloud(pc).T)
+    if data_type == 'f2':
+        return np.isclose(S[0], S[1], atol=1e-1)
+    if data_type == 'l2':
+        return np.isclose(S[1], S[2], atol=1e-1)
+    if data_type == 'distinct':
+        return (not np.isclose(S[0], S[1], atol=1e-1)) and (not np.isclose(S[1], S[2], atol=1e-1))
+    return False
 
 class ModelNet40(Dataset):
-    def __init__(self, num_points, data_size=None, partition='train', gaussian_noise=False, unseen=False, factor=4):
+    def __init__(self, num_points, data_size=None, partition='train', data_type=None, gaussian_noise=False, unseen=False, factor=4):
         self.data, self.label = load_data(partition)
         self.data_size = data_size
+
+        if data_type is not None:
+            ls = []
+            for index in range(len(self.data)):
+                if check(data_type, self.data[index]):
+                    ls.append(index)
+            # print(f'ls={ls}')
+            ls = np.asarray(ls)
+            self.data = self.data[ls]
+            self.label = self.label[ls]
 
         # Bound the data. This is deterministic, i.e., we can easily debug.
         if data_size is not None:
             self.data = self.data[:data_size]
             self.label = self.label[:data_size]
+
+        print(f'**************** DATA {partition} = {len(self.data)} *****************')
 
         self.num_points = num_points
         self.partition = partition
@@ -116,15 +139,17 @@ class ModelNet40(Dataset):
         pointcloud1 = pointcloud.T
 
         rotation_ab = Rotation.from_euler('zyx', [anglez, angley, anglex])
-        pointcloud2 = rotation_ab.apply(pointcloud1.T).T + np.expand_dims(translation_ab, axis=1)
+        pointcloud2 = rotation_ab.apply(pointcloud1.T).T# + np.expand_dims(translation_ab, axis=1)
 
         if self.gaussian_noise:
-            assert 0
+            # assert 0
             pointcloud1 = jitter_pointcloud(pointcloud1)
             pointcloud2 = jitter_pointcloud(pointcloud2)
 
         euler_ab = np.asarray([anglez, angley, anglex])
         euler_ba = -euler_ab[::-1]
+
+        print(f'item={item}, euler_ab={euler_ab}')
 
         pointcloud1 = np.random.permutation(pointcloud1.T).T
         pointcloud2 = np.random.permutation(pointcloud2.T).T

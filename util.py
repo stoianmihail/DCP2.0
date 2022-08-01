@@ -37,10 +37,15 @@ def transform_point_cloud(point_cloud, rotation, translation):
         rot_mat = rotation
     return torch.matmul(rot_mat, point_cloud) + translation.unsqueeze(2)
 
+from difficp.utils.geometry_utils import rotation_matrix_to_euler_angles
 
 def npmat2euler(mats, seq='zyx'):
     eulers = []
     for i in range(mats.shape[0]):
+        print(f'mat={mats[i]}')
         r = Rotation.from_matrix(mats[i])
+        debug1 = r.as_euler(seq, degrees=True)
+        debug2 = None
         eulers.append(r.as_euler(seq, degrees=True))
+        print(f'debug1={debug1} vs {debug2}')
     return np.asarray(eulers, dtype='float32')

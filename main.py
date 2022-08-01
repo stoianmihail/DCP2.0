@@ -18,7 +18,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
-
+from difficp.utils.geometry_utils import rotation_matrix_to_euler_angles
 
 # Part of the code is referred from: https://github.com/floodsung/LearningToCompare_FSL
 
@@ -81,7 +81,10 @@ def test_one_epoch(args, net, test_loader):
 
         batch_size = src.size(0)
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
+
+        # print(f'euler_ab={euler_ab}')
+
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target, euler_ab)
 
 
         # print(f'target={rotation_ab}\npred={rotation_ab_pred}')
@@ -122,11 +125,16 @@ def test_one_epoch(args, net, test_loader):
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
 
-        mse_ab += torch.mean((transformed_src - target) ** 2, dim=[0, 1, 2]).item() * batch_size
-        mae_ab += torch.mean(torch.abs(transformed_src - target), dim=[0, 1, 2]).item() * batch_size
+        print(f'rotation_ab_pred={rotation_matrix_to_euler_angles(rotation_ab_pred, "zyx")}, euler_ab={euler_ab}')
 
-        mse_ba += torch.mean((transformed_target - src) ** 2, dim=[0, 1, 2]).item() * batch_size
-        mae_ba += torch.mean(torch.abs(transformed_target - src), dim=[0, 1, 2]).item() * batch_size
+        # TODO: but this is of course wrong! Think of permutations!!!
+        mse_ab += torch.mean((rotation_matrix_to_euler_angles(rotation_ab_pred, "zyx") - euler_ab.cuda()) ** 2, dim=[0, 1]).item() * batch_size
+        mae_ab += torch.mean(torch.abs(rotation_matrix_to_euler_angles(rotation_ab_pred, "zyx") - euler_ab.cuda()), dim=[0, 1]).item() * batch_size
+
+        print(f'mse_ab={mse_ab}')
+
+        mse_ba += torch.mean((rotation_matrix_to_euler_angles(rotation_ba_pred, "zyx") - euler_ba.cuda()) ** 2, dim=[0, 1]).item() * batch_size
+        mae_ba += torch.mean(torch.abs(rotation_matrix_to_euler_angles(rotation_ba_pred, "zyx") - euler_ba.cuda()), dim=[0, 1]).item() * batch_size
 
     rotations_ab = np.concatenate(rotations_ab, axis=0)
     translations_ab = np.concatenate(translations_ab, axis=0)
@@ -201,9 +209,9 @@ def train_one_epoch(args, net, train_loader, opt, scheduler):
         translations_ba_pred.append(translation_ba_pred.detach().cpu().numpy())
         eulers_ba.append(euler_ba.numpy())
 
-        transformed_src = transform_point_cloud(src, rotation_ab_pred, translation_ab_pred)
+        # transformed_src = transform_point_cloud(src, rotation_ab_pred, translation_ab_pred)
 
-        transformed_target = transform_point_cloud(target, rotation_ba_pred, translation_ba_pred)
+        # transformed_target = transform_point_cloud(target, rotation_ba_pred, translation_ba_pred)
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
         loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
@@ -225,11 +233,13 @@ def train_one_epoch(args, net, train_loader, opt, scheduler):
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
 
-        mse_ab += torch.mean((transformed_src - target) ** 2, dim=[0, 1, 2]).item() * batch_size
-        mae_ab += torch.mean(torch.abs(transformed_src - target), dim=[0, 1, 2]).item() * batch_size
+        # print(f'rotation_ab_pred={rotatoin_ab_pred}, euler_ab={euler_ab}')
 
-        mse_ba += torch.mean((transformed_target - src) ** 2, dim=[0, 1, 2]).item() * batch_size
-        mae_ba += torch.mean(torch.abs(transformed_target - src), dim=[0, 1, 2]).item() * batch_size
+        mse_ab += torch.mean((rotation_matrix_to_euler_angles(rotation_ab_pred, "zyx") - euler_ab) ** 2, dim=[0, 1, 2]).item() * batch_size
+        mae_ab += torch.mean(torch.abs(rotation_matrix_to_euler_angles(rotation_ab_pred, "zyx") - euler_ab), dim=[0, 1, 2]).item() * batch_size
+
+        mse_ba += torch.mean((rotation_matrix_to_euler_angles(rotation_ba_pred, "zyx") - euler_ba) ** 2, dim=[0, 1, 2]).item() * batch_size
+        mae_ba += torch.mean(torch.abs(rotation_matrix_to_euler_angles(rotation_ba_pred, "zyx") - euler_ba), dim=[0, 1, 2]).item() * batch_size
 
     rotations_ab = np.concatenate(rotations_ab, axis=0)
     translations_ab = np.concatenate(translations_ab, axis=0)
@@ -524,6 +534,8 @@ def main():
     parser = argparse.ArgumentParser(description='Point Cloud Registration')
     parser.add_argument('--data_size', type=int, default=None, metavar='N',
                     help = 'Data size to use in training')
+    parser.add_argument('--data_type', type=str, default=None, metavar='N',
+                    help = 'Data type to use in training')
     parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
                         help='Name of the experiment')
     parser.add_argument('--model', type=str, default='dcp', metavar='N',
@@ -596,11 +608,11 @@ def main():
     if args.dataset == 'modelnet40':
         train_loader = DataLoader(
             ModelNet40(num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
-                       unseen=args.unseen, factor=args.factor, data_size=args.data_size),
+                       unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
             batch_size=args.batch_size, shuffle=True, drop_last=True)
         test_loader = DataLoader(
             ModelNet40(num_points=args.num_points, partition='test', gaussian_noise=args.gaussian_noise,
-                       unseen=args.unseen, factor=args.factor, data_size=args.data_size),
+                       unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
             batch_size=args.test_batch_size, shuffle=False, drop_last=False)
     else:
         raise Exception("not implemented")

@@ -425,6 +425,7 @@ class SVDHead(nn.Module):
         t = torch.matmul(-R, src.mean(dim=2, keepdim=True)) + src_corr.mean(dim=2, keepdim=True)
         return R, t.view(batch_size, 3)
 
+from hypericp import torch_solve_batch
 
 class DCP(nn.Module):
     def __init__(self, args):
@@ -488,29 +489,44 @@ class DCP(nn.Module):
     def forward(self, *input):
         src = input[0]
         tgt = input[1]
-        src_embedding = self.emb_nn(src)
-        tgt_embedding = self.emb_nn(tgt)
+        debug = input[2]
 
-        src_embedding_p, tgt_embedding_p = self.pointer(src_embedding, tgt_embedding)
+        rotation_ab, translation_ab, rotation_ba, translation_ba = None, None, None, None
+        if not self.training:
+            # Use SVD.
+            print(f'inside')
+            rotation_ab, translation_ab = torch_solve_batch(src, tgt, debug=debug, verbose=False)
 
-        src_embedding = src_embedding + src_embedding_p
-        tgt_embedding = tgt_embedding + tgt_embedding_p
+            for i in range(src.size(0)):
+                assert torch.norm(debug[i].cuda() - rotation_matrix_to_euler_angles(rotation_ab[i], "zyx")) < 1
+                print(f'compare={debug[i]} vs {rotation_matrix_to_euler_angles(rotation_ab[i], "zyx")}')
 
-        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
-        if self.cycle:
-            rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
-        else:
             rotation_ba = rotation_ab.transpose(2, 1).contiguous()
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
+        else:
+            src_embedding = self.emb_nn(src)
+            tgt_embedding = self.emb_nn(tgt)
 
-        rotation_ab, translation_ab = self._refine_with_icp(
-            src, tgt, rotation_ab, translation_ab
-        )
+            src_embedding_p, tgt_embedding_p = self.pointer(src_embedding, tgt_embedding)
+
+            src_embedding = src_embedding + src_embedding_p
+            tgt_embedding = tgt_embedding + tgt_embedding_p
+
+            rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
+            if self.cycle:
+                rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
+            else:
+                rotation_ba = rotation_ab.transpose(2, 1).contiguous()
+                translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
+
+            # rotation_ab, translation_ab = self._refine_with_icp(
+            #     src, tgt, rotation_ab, translation_ab
+            # )
 
         # TODO: really use this during training?
-        if not self.training:
-            rotation_ab, translation_ab = self._refine_with_icp(
-                src, tgt, rotation_ab, translation_ab, full_icp=True,
-            )
+        # if not self.training:
+        #     rotation_ab, translation_ab = self._refine_with_icp(
+        #         src, tgt, rotation_ab, translation_ab, full_icp=True,
+        #     )
 
         return rotation_ab, translation_ab, rotation_ba, translation_ba
