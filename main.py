@@ -48,6 +48,7 @@ def _init_(args):
 
 
 def test_one_epoch(args, net, test_loader):
+    print(f'[test]')
     net.eval()
     mse_ab = 0
     mae_ab = 0
@@ -83,7 +84,7 @@ def test_one_epoch(args, net, test_loader):
         rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
 
 
-        print(f'target={rotation_ab}\npred={rotation_ab_pred}')
+        # print(f'target={rotation_ab}\npred={rotation_ab_pred}')
 
 
         ## save rotation and translation
@@ -148,6 +149,7 @@ def test_one_epoch(args, net, test_loader):
 
 
 def train_one_epoch(args, net, train_loader, opt, scheduler):
+    print(f'[train]')
     net.train()
 
     mse_ab = 0
@@ -184,7 +186,7 @@ def train_one_epoch(args, net, train_loader, opt, scheduler):
         num_examples += batch_size
         rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
 
-        print(f'target={rotation_ab}\npred={rotation_ab_pred}')
+        # print(f'target={rotation_ab}\npred={rotation_ab_pred}')
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -566,7 +568,7 @@ def main():
                         help='evaluate the model')
     parser.add_argument('--cycle', type=bool, default=False, metavar='N',
                         help='Whether to use cycle consistency')
-    parser.add_argument('--gaussian_noise', type=bool, default=False, metavar='N',
+    parser.add_argument('--gaussian_noise', type=bool, default=True, metavar='N',
                         help='Wheter to add gaussian noise')
     parser.add_argument('--unseen', type=bool, default=False, metavar='N',
                         help='Wheter to test on unseen category')

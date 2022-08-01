@@ -452,6 +452,8 @@ class DCP(nn.Module):
         else:
             raise Exception('Not implemented')
 
+        # self.eval = args.eval
+
         # TODO: but don't we need the `InitPoseICP`???
         icp_kwargs = {"verbose": False}
         self.difficp = ICP6DoF(differentiable=True, iters_max=1, **icp_kwargs)
@@ -462,7 +464,7 @@ class DCP(nn.Module):
         batch_size = src.size()[0]
         rotations, translations = [], []
         icp = self.icp if full_icp else self.difficp
-        print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
+        # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
         for i in range(batch_size):
             icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
             icp_init_pose[:3, :3] = rotation[i]
@@ -501,14 +503,12 @@ class DCP(nn.Module):
             rotation_ba = rotation_ab.transpose(2, 1).contiguous()
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
 
-        # rotation_ab, translation_ab = self._refine_with_icp(
-        #     src, tgt, rotation_ab, translation_ab
-        # )
+        rotation_ab, translation_ab = self._refine_with_icp(
+            src, tgt, rotation_ab, translation_ab
+        )
 
-        print(f'euler={rotation_matrix_to_euler_angles(rotation_ab)}')
-
+        # TODO: really use this during training?
         if not self.training:
-            print(f'comes here?')
             rotation_ab, translation_ab = self._refine_with_icp(
                 src, tgt, rotation_ab, translation_ab, full_icp=True,
             )
