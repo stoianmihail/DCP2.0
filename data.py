@@ -119,6 +119,7 @@ class ModelNet40(Dataset):
         pointcloud2 = rotation_ab.apply(pointcloud1.T).T + np.expand_dims(translation_ab, axis=1)
 
         if self.gaussian_noise:
+            assert 0
             pointcloud1 = jitter_pointcloud(pointcloud1)
             pointcloud2 = jitter_pointcloud(pointcloud2)
 

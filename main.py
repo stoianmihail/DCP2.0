@@ -568,7 +568,7 @@ def main():
                         help='evaluate the model')
     parser.add_argument('--cycle', type=bool, default=False, metavar='N',
                         help='Whether to use cycle consistency')
-    parser.add_argument('--gaussian_noise', type=bool, default=True, metavar='N',
+    parser.add_argument('--gaussian_noise', type=bool, default=False, metavar='N',
                         help='Wheter to add gaussian noise')
     parser.add_argument('--unseen', type=bool, default=False, metavar='N',
                         help='Wheter to test on unseen category')
