@@ -240,6 +240,9 @@ def torch_solve(source, target, debug=None, verbose=False):
     
     (U1, S1), (U2, S2) = torch_compute_components(source, target, verbose=verbose)
 
+    print(f'S1={S1}\nS2={S2}')
+    assert not torch.isclose(S1[0], S1[1], atol=1e-1) and not torch.isclose(S1[1], S1[2], atol=1e-1)
+
     if verbose:
         print(f'S1={S1}\nS2={S2}')
 

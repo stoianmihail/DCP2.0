@@ -60,18 +60,19 @@ def jitter_pointcloud(pointcloud, sigma=0.01, clip=0.05):
 
 from hypericp import compute_components
 
-def check(data_type, pc):
+def check(data_type, pc, num_points):
     kEpsilon = 5e-1
-    (_, T), (_, S) = compute_components(pc.T, jitter_pointcloud(pc).T)
+    (_, T), (_, S) = compute_components(pc[:num_points].T, np.random.permutation(jitter_pointcloud(pc[:num_points]).T))
+    assert np.allclose(T, S, atol=1e-1)
     if data_type == 'f2':
         return np.isclose(S[0], S[1], atol=kEpsilon)
     if data_type == 'l2':
         return np.isclose(S[1], S[2], atol=kEpsilon)
     if data_type == 'distinct':
-        if not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon)):
-            if np.allclose(S, np.asarray([18.0120,  6.5846,  6.3458]), atol=1):
-                print(f'pc.T[0]={pc[0]}, jitter.T[0]={jitter_pointcloud(pc)[0]}')
-                print(f'S={S}, T={T}')
+        # if not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon)):
+        #     if np.allclose(S, np.asarray([18.0120,  6.5846,  6.3458]), atol=1):
+        #         print(f'pc.T[0]={pc[0]}, jitter.T[0]={jitter_pointcloud(pc)[0]}')
+        #         print(f'S={S}, T={T}')
         return not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon))
     return False
 
@@ -83,7 +84,7 @@ class ModelNet40(Dataset):
         if data_type is not None:
             ls = []
             for index in range(len(self.data)):
-                if check(data_type, self.data[index]):
+                if check(data_type, self.data[index], num_points):
                     ls.append(index)
             # print(f'ls={ls}')
             ls = np.asarray(ls)

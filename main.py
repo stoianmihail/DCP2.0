@@ -299,12 +299,16 @@ def test(args, net, test_loader, boardio, textio):
         e1 = test_rotations_ab_pred_euler[i]
         e2 = np.degrees(test_eulers_ab[i])
         print(f'e1={e1}\ne2={e2}')
-        constError = 2
+        constError = 3
         if not (np.linalg.norm(e1 - e2) < constError):
             print(f'i={i}')
             # print(test_loader[i])
             from threading import Lock
             log_mutex = Lock()
+
+            from hypericp import compute_components
+            (U1, S1), (U2, S2) = compute_components(srcs[i], targets[i])
+            print(f'S1={S1}\nS2={S2}')
 
             log_mutex.acquire()
             f = open(f'debug_hyper-new.npy', 'wb')
