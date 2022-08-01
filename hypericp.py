@@ -218,11 +218,12 @@ def find_best_delta(U1, S1, U2, S2, debug=None, verbose=False):
     for b in last_bs:
         bad = False
         for a in rotation_matrix_to_euler_angles(modify(U2, get_bitstring(b)) * (compute_ratio(S2, S1)) @ U1.T, "zyx"):
-            if a < -1e-1:
+            if a < 0:
                 bad = True
         if not bad:
             last_best = b  
         print(f'!!! b={b}, chosen angles={(rotation_matrix_to_euler_angles(modify(U2, get_bitstring(b)) * (compute_ratio(S2, S1)) @ U1.T, "zyx"))}')
+    print(f'!!! best angles={torch.rad2deg(rotation_matrix_to_euler_angles(modify(U2, get_bitstring(last_best)) * (compute_ratio(S2, S1)) @ U1.T, "zyx"))}')
     if verbose and last_best is not None:
         print(f'!!! best angles={torch.rad2deg(rotation_matrix_to_euler_angles(modify(U2, get_bitstring(last_best)) * (compute_ratio(S2, S1)) @ U1.T, "zyx"))}')
     return last_best

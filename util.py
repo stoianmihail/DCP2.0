@@ -42,10 +42,12 @@ from difficp.utils.geometry_utils import rotation_matrix_to_euler_angles
 def npmat2euler(mats, seq='zyx'):
     eulers = []
     for i in range(mats.shape[0]):
-        print(f'mat={mats[i]}')
+        # print(f'mat={mats[i]}')
         r = Rotation.from_matrix(mats[i])
         debug1 = r.as_euler(seq, degrees=True)
-        debug2 = None
+        debug2 = torch.rad2deg(rotation_matrix_to_euler_angles(torch.from_numpy(mats[i]), convention=seq)).cpu().numpy()
         eulers.append(r.as_euler(seq, degrees=True))
-        print(f'debug1={debug1} vs {debug2}')
+        if not np.allclose(debug1, debug2, atol=1e-4):
+            print(f'[seq = {seq}] debug1={debug1} vs {debug2}')
+        assert np.allclose(debug1, debug2, atol=1e-4)
     return np.asarray(eulers, dtype='float32')
