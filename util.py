@@ -47,7 +47,7 @@ def npmat2euler(mats, seq='zyx'):
         debug1 = r.as_euler(seq, degrees=True)
         debug2 = torch.rad2deg(rotation_matrix_to_euler_angles(torch.from_numpy(mats[i]), convention=seq)).cpu().numpy()
         eulers.append(r.as_euler(seq, degrees=True))
-        if not np.allclose(debug1, debug2, atol=1e-4):
-            print(f'[seq = {seq}] debug1={debug1} vs {debug2}')
-        assert np.allclose(debug1, debug2, atol=1e-4)
+        # if not np.allclose(debug1, debug2, atol=):
+        #     print(f'[seq = {seq}] debug1={debug1} vs {debug2}')
+        # assert np.allclose(debug1, debug2, atol=1e-4)
     return np.asarray(eulers, dtype='float32')

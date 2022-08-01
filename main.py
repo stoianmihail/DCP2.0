@@ -299,22 +299,23 @@ def test(args, net, test_loader, boardio, textio):
         e1 = test_rotations_ab_pred_euler[i]
         e2 = np.degrees(test_eulers_ab[i])
         print(f'e1={e1}\ne2={e2}')
-        if not (np.linalg.norm(e1 - e2) < 1):
+        constError = 2
+        if not (np.linalg.norm(e1 - e2) < constError):
             print(f'i={i}')
-            print(test_loader[i])
+            # print(test_loader[i])
             from threading import Lock
             log_mutex = Lock()
 
             log_mutex.acquire()
             f = open(f'debug_hyper-new.npy', 'wb')
-            np.save(f, srcs[i].cpu().numpy())
-            np.save(f, targets[i].cpu().numpy())
+            np.save(f, srcs[i])
+            np.save(f, targets[i])
             # np.save(f, debug['rotation'])
             print(f'-->>>>>>>>>>>>>>>>>>>>>> debug={test_eulers_ab[i]}')
-            np.save(f, test_eulers_ab[i].cpu().numpy())
+            np.save(f, test_eulers_ab[i])
             log_mutex.release()
 
-        assert np.linalg.norm(e1 - e2) < 1
+        assert np.linalg.norm(e1 - e2) < constError
     test_r_mse_ab = np.mean((test_rotations_ab_pred_euler - np.degrees(test_eulers_ab)) ** 2)
     test_r_rmse_ab = np.sqrt(test_r_mse_ab)
     test_r_mae_ab = np.mean(np.abs(test_rotations_ab_pred_euler - np.degrees(test_eulers_ab)))

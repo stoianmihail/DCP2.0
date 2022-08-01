@@ -58,16 +58,21 @@ def jitter_pointcloud(pointcloud, sigma=0.01, clip=0.05):
     pointcloud += np.clip(sigma * np.random.randn(N, C), -1 * clip, clip)
     return pointcloud
 
-from hypericp import compute_components_one
+from hypericp import compute_components
 
 def check(data_type, pc):
-    (_, S) = compute_components_one(jitter_pointcloud(pc).T)
+    kEpsilon = 5e-1
+    (_, T), (_, S) = compute_components(pc.T, jitter_pointcloud(pc).T)
     if data_type == 'f2':
-        return np.isclose(S[0], S[1], atol=1e-1)
+        return np.isclose(S[0], S[1], atol=kEpsilon)
     if data_type == 'l2':
-        return np.isclose(S[1], S[2], atol=1e-1)
+        return np.isclose(S[1], S[2], atol=kEpsilon)
     if data_type == 'distinct':
-        return (not np.isclose(S[0], S[1], atol=1e-1)) and (not np.isclose(S[1], S[2], atol=1e-1))
+        if not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon)):
+            if np.allclose(S, np.asarray([18.0120,  6.5846,  6.3458]), atol=1):
+                print(f'pc.T[0]={pc[0]}, jitter.T[0]={jitter_pointcloud(pc)[0]}')
+                print(f'S={S}, T={T}')
+        return not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon))
     return False
 
 class ModelNet40(Dataset):

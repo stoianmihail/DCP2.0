@@ -499,7 +499,7 @@ class DCP(nn.Module):
 
             for i in range(src.size(0)):
                 print(f'compare={debug[i]} vs {rotation_matrix_to_euler_angles(rotation_ab[i], "zyx")} => {torch.rad2deg(rotation_matrix_to_euler_angles(rotation_ab[i], "zyx"))}')
-                assert torch.norm(debug[i].cuda() - rotation_matrix_to_euler_angles(rotation_ab[i], "zyx")) < 0.01
+                # assert torch.norm(debug[i].cuda() - rotation_matrix_to_euler_angles(rotation_ab[i], "zyx")) < 0.1
 
             rotation_ba = rotation_ab.transpose(2, 1).contiguous()
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)

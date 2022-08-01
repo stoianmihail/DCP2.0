@@ -173,7 +173,7 @@ def find_best_delta(U1, S1, U2, S2, debug=None, verbose=False):
                 if is_valid(R, delta=delta, verbose=False):
                     if verbose:
                         # print(f'R={R}')
-                        print(f'angles={torch.rad2deg(rotation_matrix_to_euler_angles(R, "zyx"))}')
+                        print(f'angles={rotation_matrix_to_euler_angles(R, "zyx")}')
 
                     bs.append(i)
                     print(f'--- !!! --- is valid! best={bs}, alfa={0}')
@@ -203,7 +203,7 @@ def find_best_delta(U1, S1, U2, S2, debug=None, verbose=False):
 
         if len(bs) == 1:
             chosen_angles = rotation_matrix_to_euler_angles(modify(U2, get_bitstring(bs[0])) * (compute_ratio(S2, S1)) @ U1.T, "zyx")
-            assert chosen_angles[0] > 1e-6 and chosen_angles[1] > 1e-6 and chosen_angles[2] > 1e-6
+            # assert chosen_angles[0] > 1e-6 and chosen_angles[1] > 1e-6 and chosen_angles[2] > 1e-6
             # assert torch.all
             return bs[0]
         elif len(bs) > 1:
