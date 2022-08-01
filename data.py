@@ -68,6 +68,8 @@ def check(data_type, pc, num_points):
         return np.isclose(S[0], S[1], atol=kEpsilon)
     if data_type == 'l2':
         return np.isclose(S[1], S[2], atol=kEpsilon)
+    if data_type == 's2':
+        return np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon)
     if data_type == 'distinct':
         # if not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon)):
         #     if np.allclose(S, np.asarray([18.0120,  6.5846,  6.3458]), atol=1):
@@ -155,7 +157,7 @@ class ModelNet40(Dataset):
         euler_ab = np.asarray([anglez, angley, anglex])
         euler_ba = -euler_ab[::-1]
 
-        print(f'item={item}, euler_ab={euler_ab}')
+        # print(f'item={item}, euler_ab={euler_ab}')
 
         pointcloud1 = np.random.permutation(pointcloud1.T).T
         pointcloud2 = np.random.permutation(pointcloud2.T).T

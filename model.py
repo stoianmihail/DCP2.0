@@ -489,10 +489,10 @@ class DCP(nn.Module):
     def forward(self, *input):
         src = input[0]
         tgt = input[1]
-        debug = input[2]
+        # debug = input[2]
 
         rotation_ab, translation_ab, rotation_ba, translation_ba = None, None, None, None
-        if not self.training:
+        if False:#not self.training:
             # Use SVD.
             print(f'inside')
             rotation_ab, translation_ab = torch_solve_batch(src, tgt, debug=debug, verbose=False)

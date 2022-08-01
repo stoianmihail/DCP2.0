@@ -72,7 +72,7 @@ def test_one_epoch(args, net, test_loader):
     eulers_ab = []
     eulers_ba = []
 
-    srcs, targets = [], []
+    # srcs, targets = [], []
 
     for src, target, rotation_ab, translation_ab, rotation_ba, translation_ba, euler_ab, euler_ba in tqdm(test_loader):
         src = src.cuda()
@@ -89,8 +89,8 @@ def test_one_epoch(args, net, test_loader):
 
         rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target, euler_ab)
 
-        srcs.append(src)
-        targets.append(target)
+        # srcs.append(src)
+        # targets.append(target)
         # srcs = np.concatenate(srcs, axis=0)
         # targets = np.concatenate(targets, axis=0)
 
@@ -157,14 +157,14 @@ def test_one_epoch(args, net, test_loader):
     eulers_ab = np.concatenate(eulers_ab, axis=0)
     eulers_ba = np.concatenate(eulers_ba, axis=0)
 
-    srcs = np.concatenate([elem.cpu().numpy() for elem in srcs], axis=0)
-    targets = np.concatenate([elem.cpu().numpy() for elem in targets], axis=0)
+    # srcs = np.concatenate([elem.cpu().numpy() for elem in srcs], axis=0)
+    # targets = np.concatenate([elem.cpu().numpy() for elem in targets], axis=0)
 
     return total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
            mse_ab * 1.0 / num_examples, mae_ab * 1.0 / num_examples, \
            mse_ba * 1.0 / num_examples, mae_ba * 1.0 / num_examples, rotations_ab, \
            translations_ab, rotations_ab_pred, translations_ab_pred, rotations_ba, \
-           translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba, srcs, targets
+           translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba#, srcs, targets
 
 
 def train_one_epoch(args, net, train_loader, opt, scheduler):
@@ -253,11 +253,11 @@ def train_one_epoch(args, net, train_loader, opt, scheduler):
 
         # print(f'rotation_ab_pred={rotatoin_ab_pred}, euler_ab={euler_ab}')
 
-        mse_ab += torch.mean((rotation_matrix_to_euler_angles(rotation_ab_pred, "zyx") - euler_ab) ** 2, dim=[0, 1, 2]).item() * batch_size
-        mae_ab += torch.mean(torch.abs(rotation_matrix_to_euler_angles(rotation_ab_pred, "zyx") - euler_ab), dim=[0, 1, 2]).item() * batch_size
+        mse_ab += 0#torch.mean((rotation_matrix_to_euler_angles(rotation_ab_pred, "zyx") - euler_ab) ** 2, dim=[0, 1, 2]).item() * batch_size
+        mae_ab += 0#torch.mean(torch.abs(rotation_matrix_to_euler_angles(rotation_ab_pred, "zyx") - euler_ab), dim=[0, 1, 2]).item() * batch_size
 
-        mse_ba += torch.mean((rotation_matrix_to_euler_angles(rotation_ba_pred, "zyx") - euler_ba) ** 2, dim=[0, 1, 2]).item() * batch_size
-        mae_ba += torch.mean(torch.abs(rotation_matrix_to_euler_angles(rotation_ba_pred, "zyx") - euler_ba), dim=[0, 1, 2]).item() * batch_size
+        mse_ba += 0#torch.mean((rotation_matrix_to_euler_angles(rotation_ba_pred, "zyx") - euler_ba) ** 2, dim=[0, 1, 2]).item() * batch_size
+        mae_ba += 0#torch.mean(torch.abs(rotation_matrix_to_euler_angles(rotation_ba_pred, "zyx") - euler_ba), dim=[0, 1, 2]).item() * batch_size
 
     rotations_ab = np.concatenate(rotations_ab, axis=0)
     translations_ab = np.concatenate(translations_ab, axis=0)
@@ -279,7 +279,7 @@ def train_one_epoch(args, net, train_loader, opt, scheduler):
            mse_ab * 1.0 / num_examples, mae_ab * 1.0 / num_examples, \
            mse_ba * 1.0 / num_examples, mae_ba * 1.0 / num_examples, rotations_ab, \
            translations_ab, rotations_ab_pred, translations_ab_pred, rotations_ba, \
-           translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba, srcs, targets
+           translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba#, srcs, targets
 
 
 def test(args, net, test_loader, boardio, textio):
@@ -288,38 +288,38 @@ def test(args, net, test_loader, boardio, textio):
     test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
     test_rotations_ab_pred, \
     test_translations_ab_pred, test_rotations_ba, test_translations_ba, test_rotations_ba_pred, \
-    test_translations_ba_pred, test_eulers_ab, test_eulers_ba, srcs, targets = test_one_epoch(args, net, test_loader)
+    test_translations_ba_pred, test_eulers_ab, test_eulers_ba = test_one_epoch(args, net, test_loader)
     test_rmse_ab = np.sqrt(test_mse_ab)
     test_rmse_ba = np.sqrt(test_mse_ba)
 
     test_rotations_ab_pred_euler = npmat2euler(test_rotations_ab_pred)
 
     # print(f'test_={test_rotations_ab_pred_euler}\ndegrees={np.degrees(test_eulers_ab)}')
-    for i in range(len(test_rotations_ab_pred)):
-        e1 = test_rotations_ab_pred_euler[i]
-        e2 = np.degrees(test_eulers_ab[i])
-        print(f'e1={e1}\ne2={e2}')
-        constError = 3
-        if not (np.linalg.norm(e1 - e2) < constError):
-            print(f'i={i}')
-            # print(test_loader[i])
-            from threading import Lock
-            log_mutex = Lock()
+    # for i in range(len(test_rotations_ab_pred)):
+    #     e1 = test_rotations_ab_pred_euler[i]
+    #     e2 = np.degrees(test_eulers_ab[i])
+    #     print(f'e1={e1}\ne2={e2}')
+    #     constError = 10
+    #     if not (np.linalg.norm(e1 - e2) < constError):
+    #         print(f'i={i}')
+    #         # print(test_loader[i])
+    #         from threading import Lock
+    #         log_mutex = Lock()
 
-            from hypericp import compute_components
-            (U1, S1), (U2, S2) = compute_components(srcs[i], targets[i])
-            print(f'S1={S1}\nS2={S2}')
+    #         from hypericp import compute_components
+    #         (U1, S1), (U2, S2) = compute_components(srcs[i], targets[i])
+    #         print(f'S1={S1}\nS2={S2}')
 
-            log_mutex.acquire()
-            f = open(f'debug_hyper-new.npy', 'wb')
-            np.save(f, srcs[i])
-            np.save(f, targets[i])
-            # np.save(f, debug['rotation'])
-            print(f'-->>>>>>>>>>>>>>>>>>>>>> debug={test_eulers_ab[i]}')
-            np.save(f, test_eulers_ab[i])
-            log_mutex.release()
+    #         log_mutex.acquire()
+    #         f = open(f'debug_hyper-new.npy', 'wb')
+    #         np.save(f, srcs[i])
+    #         np.save(f, targets[i])
+    #         # np.save(f, debug['rotation'])
+    #         print(f'-->>>>>>>>>>>>>>>>>>>>>> debug={test_eulers_ab[i]}')
+    #         np.save(f, test_eulers_ab[i])
+    #         log_mutex.release()
 
-        assert np.linalg.norm(e1 - e2) < constError
+    #     assert np.linalg.norm(e1 - e2) < constError
     test_r_mse_ab = np.mean((test_rotations_ab_pred_euler - np.degrees(test_eulers_ab)) ** 2)
     test_r_rmse_ab = np.sqrt(test_r_mse_ab)
     test_r_mae_ab = np.mean(np.abs(test_rotations_ab_pred_euler - np.degrees(test_eulers_ab)))
@@ -393,7 +393,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
         test_rotations_ab_pred, \
         test_translations_ab_pred, test_rotations_ba, test_translations_ba, test_rotations_ba_pred, \
-        test_translations_ba_pred, test_eulers_ab, test_eulers_ba, _, _ = test_one_epoch(args, net, test_loader)
+        test_translations_ba_pred, test_eulers_ab, test_eulers_ba = test_one_epoch(args, net, test_loader)
         train_rmse_ab = np.sqrt(train_mse_ab)
         test_rmse_ab = np.sqrt(test_mse_ab)
 
@@ -616,7 +616,7 @@ def main():
                         help='number of episode to train ')
     parser.add_argument('--use_sgd', action='store_true', default=False,
                         help='Use SGD')
-    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
+    parser.add_argument('--lr', type=float, default=0.0005, metavar='LR',
                         help='learning rate (default: 0.001, 0.1 if using sgd)')
     parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                         help='SGD momentum (default: 0.9)')
