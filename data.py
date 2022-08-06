@@ -21,7 +21,7 @@ def download():
     if not os.path.exists(os.path.join(DATA_DIR, 'modelnet40_ply_hdf5_2048')):
         www = 'https://shapenet.cs.stanford.edu/media/modelnet40_ply_hdf5_2048.zip'
         zipfile = os.path.basename(www)
-        os.system('wget %s; unzip %s' % (www, zipfile))
+        os.system('wget %s --no-check-certificate; unzip %s' % (www, zipfile))
         os.system('mv %s %s' % (zipfile[:-4], DATA_DIR))
         os.system('rm %s' % (zipfile))
 
@@ -78,8 +78,8 @@ class ModelNet40(Dataset):
 
     def __getitem__(self, item):
         pointcloud = self.data[item][:self.num_points]
-        if self.gaussian_noise:
-            pointcloud = jitter_pointcloud(pointcloud)
+        # if self.gaussian_noise:
+        #     pointcloud = jitter_pointcloud(pointcloud)
         if self.partition != 'train':
             np.random.seed(item)
         anglex = np.random.uniform() * np.pi / self.factor
@@ -117,6 +117,10 @@ class ModelNet40(Dataset):
 
         pointcloud1 = np.random.permutation(pointcloud1.T).T
         pointcloud2 = np.random.permutation(pointcloud2.T).T
+
+        if self.gaussian_noise:
+            pointcloud1 = jitter_pointcloud(pointcloud1)
+            pointcloud2 = jitter_pointcloud(pointcloud2)
 
         return pointcloud1.astype('float32'), pointcloud2.astype('float32'), R_ab.astype('float32'), \
                translation_ab.astype('float32'), R_ba.astype('float32'), translation_ba.astype('float32'), \

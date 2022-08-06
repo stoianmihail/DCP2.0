@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-
+torch.cuda.empty_cache()
 # Part of the code is referred from: https://github.com/floodsung/LearningToCompare_FSL
 
 class IOStream:
@@ -598,7 +598,7 @@ def main():
     if args.model == 'dcp':
         net = DCP(args).cuda()
         if args.eval:
-            if args.model_path is '':
+            if args.model_path == '':
                 model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'
             else:
                 model_path = args.model_path

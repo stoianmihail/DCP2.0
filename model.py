@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from util import quat2mat
 
-
+torch.cuda.empty_cache()
 # Part of the code is referred from: http://nlp.seas.harvard.edu/2018/04/03/attention.html#positional-encoding
 
 def clones(module, N):
