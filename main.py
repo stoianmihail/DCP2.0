@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
 from data import ModelNet40
-from model import DCP
+from model import DCP, Sprinter
 from util import transform_point_cloud, npmat2euler
 import numpy as np
 from torch.utils.data import DataLoader
@@ -517,7 +517,7 @@ def main():
     parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
                         help='Name of the experiment')
     parser.add_argument('--model', type=str, default='dcp', metavar='N',
-                        choices=['dcp'],
+                        choices=['dcp', 'sprinter'],
                         help='Model to use, [dcp]')
     parser.add_argument('--emb_nn', type=str, default='pointnet', metavar='N',
                         choices=['pointnet', 'dgcnn'],
@@ -595,23 +595,32 @@ def main():
     else:
         raise Exception("not implemented")
 
+    net = None
     if args.model == 'dcp':
         net = DCP(args).cuda()
-        if args.eval:
-            if args.model_path == '':
-                model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'
-            else:
-                model_path = args.model_path
-                print(model_path)
-            if not os.path.exists(model_path):
+    elif args.model == 'sprinter':
+        net = Sprinter(args).cuda()
+    if args.eval:
+        if args.model_path == '':
+            model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'
+        else:
+            model_path = args.model_path
+            print(model_path)
+        if not os.path.exists(model_path):
+            print("can't find pretrained model")
+            return
+        print(f'model_path={model_path}')
+        net.load_state_dict(torch.load(model_path), strict=False)
+    else:
+        if args.model_path != '':
+            if not os.path.exists(args.model_path):
                 print("can't find pretrained model")
                 return
-            net.load_state_dict(torch.load(model_path), strict=False)
-        if torch.cuda.device_count() > 1:
-            net = nn.DataParallel(net)
-            print("Let's use", torch.cuda.device_count(), "GPUs!")
-    else:
-        raise Exception('Not implemented')
+            print(f'model_path={args.model_path}')
+            net.load_state_dict(torch.load(args.model_path), strict=False)            
+    if torch.cuda.device_count() > 1:
+        net = nn.DataParallel(net)
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
     if args.eval:
         test(args, net, test_loader, boardio, textio)
     else:
