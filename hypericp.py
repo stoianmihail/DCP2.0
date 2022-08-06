@@ -241,7 +241,7 @@ def torch_solve(source, target, debug=None, verbose=False):
     (U1, S1), (U2, S2) = torch_compute_components(source, target, verbose=verbose)
 
     print(f'S1={S1}\nS2={S2}')
-    assert not torch.isclose(S1[0], S1[1], atol=1e-1) and not torch.isclose(S1[1], S1[2], atol=1e-1)
+    # assert not torch.isclose(S1[0], S1[1], atol=1e-1) and not torch.isclose(S1[1], S1[2], atol=1e-1)
 
     if verbose:
         print(f'S1={S1}\nS2={S2}')
@@ -310,7 +310,7 @@ def torch_solve_batch(source, target, debug=None, verbose=False):
     Rs, ts, ss = [], [], []
     for index in range(source.shape[0]):
         # Solve the pair.
-        R, t = torch_solve(source[index], target[index], debug=debug[index], verbose=verbose)
+        R, t = torch_solve(source[index], target[index], debug=debug, verbose=verbose)
 
         # print(f'\n[&&&&&&&&&&&&&&&&&&&&&&&&&&]\nR.shape={R.shape}\n[&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&]\n')
         

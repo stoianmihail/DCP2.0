@@ -495,11 +495,11 @@ class DCP(nn.Module):
         if False:#not self.training:
             # Use SVD.
             print(f'inside')
-            rotation_ab, translation_ab = torch_solve_batch(src, tgt, debug=debug, verbose=False)
+            rotation_ab, translation_ab = torch_solve_batch(src, tgt, verbose=False)
 
-            for i in range(src.size(0)):
-                print(f'compare={debug[i]} vs {rotation_matrix_to_euler_angles(rotation_ab[i], "zyx")} => {torch.rad2deg(rotation_matrix_to_euler_angles(rotation_ab[i], "zyx"))}')
-                # assert torch.norm(debug[i].cuda() - rotation_matrix_to_euler_angles(rotation_ab[i], "zyx")) < 0.1
+            # for i in range(src.size(0)):
+            #     print(f'compare={debug[i]} vs {rotation_matrix_to_euler_angles(rotation_ab[i], "zyx")} => {torch.rad2deg(rotation_matrix_to_euler_angles(rotation_ab[i], "zyx"))}')
+            #     # assert torch.norm(debug[i].cuda() - rotation_matrix_to_euler_angles(rotation_ab[i], "zyx")) < 0.1
 
             rotation_ba = rotation_ab.transpose(2, 1).contiguous()
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
@@ -529,4 +529,46 @@ class DCP(nn.Module):
         #         src, tgt, rotation_ab, translation_ab, full_icp=True,
         #     )
 
+        return rotation_ab, translation_ab, rotation_ba, translation_ba
+
+class HyperICP(nn.Module):
+    def __init__(self, args):
+        super(HyperICP, self).__init__()
+
+        icp_kwargs = {"verbose": False}
+        self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
+
+    def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
+        batch_size = src.size()[0]
+        rotations, translations = [], []
+        icp = self.icp
+        for i in range(batch_size):
+            icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
+            icp_init_pose[:3, :3] = rotation[i]
+            icp_init_pose[:3, 3] = translation[i]
+            try:
+                pred_pose = icp(
+                    src[i].transpose(0, 1),
+                    tgt[i].transpose(0, 1),
+                    icp_init_pose,
+                )[0]
+                rotations.append(pred_pose[:3, :3])
+                translations.append(pred_pose[:3, 3])
+            except Exception as e:
+                print(e)
+                rotations.append(rotation[i])
+                translations.append(translation[i])
+                self.failures += 1
+                print(self.failures)
+        return torch.stack(rotations, 0), torch.stack(translations, 0)
+
+    def forward(self, *input):
+        src = input[0]
+        tgt = input[1]
+
+        rotation_ab, translation_ab = torch_solve_batch(src, tgt, verbose=False)
+
+        rotation_ba = rotation_ab.transpose(2, 1).contiguous()
+        translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
+    
         return rotation_ab, translation_ab, rotation_ba, translation_ba

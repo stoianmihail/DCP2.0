@@ -115,8 +115,12 @@ class ModelNet40(Dataset):
                 self.data = self.data[self.label<20]
                 self.label = self.label[self.label<20]
 
+        self.d = {}
+
     def __getitem__(self, item):
         pointcloud = self.data[item][:self.num_points]
+        # if self.gaussian_noise:
+        #     pointcloud = jitter_pointcloud(pointcloud)
         if self.partition != 'train':
             np.random.seed(item)
         anglex = np.random.uniform() * np.pi / self.factor

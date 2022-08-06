@@ -13,13 +13,14 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
 from transformers import NerPipeline
 from data import ModelNet40
-from model import DCP
+from model import DCP, HyperICP
 from util import transform_point_cloud, npmat2euler
 import numpy as np
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 from difficp.utils.geometry_utils import rotation_matrix_to_euler_angles
+import sys
 
 # Part of the code is referred from: https://github.com/floodsung/LearningToCompare_FSL
 
@@ -232,8 +233,8 @@ def train_one_epoch(args, net, train_loader, opt, scheduler):
         # transformed_target = transform_point_cloud(target, rotation_ba_pred, translation_ba_pred)
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
-        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-               + F.mse_loss(translation_ab_pred, translation_ab)
+        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity)# \
+#               + F.mse_loss(translation_ab_pred, translation_ab)
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
             translation_loss = torch.mean((torch.matmul(rotation_ba_pred.transpose(2, 1),
@@ -587,8 +588,8 @@ def main():
     parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
                         help='Name of the experiment')
     parser.add_argument('--model', type=str, default='dcp', metavar='N',
-                        choices=['dcp'],
-                        help='Model to use, [dcp]')
+                        choices=['dcp', 'hypericp'],
+                        help='Model to use, [dcp, hypericp]')
     parser.add_argument('--emb_nn', type=str, default='pointnet', metavar='N',
                         choices=['pointnet', 'dgcnn'],
                         help='Embedding nn to use, [pointnet, dgcnn]')
@@ -616,7 +617,7 @@ def main():
                         help='number of episode to train ')
     parser.add_argument('--use_sgd', action='store_true', default=False,
                         help='Use SGD')
-    parser.add_argument('--lr', type=float, default=0.0005, metavar='LR',
+    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate (default: 0.001, 0.1 if using sgd)')
     parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                         help='SGD momentum (default: 0.9)')
@@ -665,8 +666,16 @@ def main():
     else:
         raise Exception("not implemented")
 
+    net = None
     if args.model == 'dcp':
         net = DCP(args).cuda()
+    elif args.model == 'hypericp':
+        net = HyperICP(args).cuda()
+    if net is None:
+        print(f'Model {args.model} not (yet) implemented!')
+        sys.exit(-1)
+
+    if args.model not in ['hypericp']:
         if args.eval:
             if args.model_path == '':
                 model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'
@@ -685,11 +694,9 @@ def main():
                     return
                 print(f'model_path={args.model_path}')
                 net.load_state_dict(torch.load(args.model_path), strict=False)            
-        if torch.cuda.device_count() > 1:
-            net = nn.DataParallel(net)
-            print("Let's use", torch.cuda.device_count(), "GPUs!")
-    else:
-        raise Exception('Not implemented')
+    if torch.cuda.device_count() > 1:
+        net = nn.DataParallel(net)
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
     if args.eval:
         test(args, net, test_loader, boardio, textio)
     else:
