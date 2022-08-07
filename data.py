@@ -57,10 +57,48 @@ def jitter_pointcloud(pointcloud, sigma=0.01, clip=0.05):
     pointcloud += np.clip(sigma * np.random.randn(N, C), -1 * clip, clip)
     return pointcloud
 
+from hypericp import compute_components
 
+def check(data_type, pc, num_points):
+    kEpsilon = 5e-1
+    (_, T), (_, S) = compute_components(pc[:num_points].T, np.random.permutation(jitter_pointcloud(pc[:num_points]).T))
+    assert np.allclose(T, S, atol=1e-1)
+    if data_type == 'f2':
+        return np.isclose(S[0], S[1], atol=kEpsilon)
+    if data_type == 'l2':
+        return np.isclose(S[1], S[2], atol=kEpsilon)
+    if data_type == 's2':
+        return np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon)
+    if data_type == 'distinct':
+        # if not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon)):
+        #     if np.allclose(S, np.asarray([18.0120,  6.5846,  6.3458]), atol=1):
+        #         print(f'pc.T[0]={pc[0]}, jitter.T[0]={jitter_pointcloud(pc)[0]}')
+        #         print(f'S={S}, T={T}')
+        return not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon))
+    return False
+    
 class ModelNet40(Dataset):
-    def __init__(self, num_points, partition='train', gaussian_noise=False, unseen=False, factor=4):
+    def __init__(self, num_points, data_size=None, partition='train', data_type=None, gaussian_noise=False, unseen=False, factor=4):
         self.data, self.label = load_data(partition)
+        self.data_size = data_size
+
+        if data_type is not None:
+            ls = []
+            for index in range(len(self.data)):
+                if check(data_type, self.data[index], num_points):
+                    ls.append(index)
+            # print(f'ls={ls}')
+            ls = np.asarray(ls)
+            self.data = self.data[ls]
+            self.label = self.label[ls]
+
+        # Bound the data. This is deterministic, i.e., we can easily debug.
+        if data_size is not None:
+            self.data = self.data[:data_size]
+            self.label = self.label[:data_size]
+
+        print(f'**************** DATA {partition} = {len(self.data)} *****************')
+
         self.num_points = num_points
         self.partition = partition
         self.gaussian_noise = gaussian_noise
