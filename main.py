@@ -6,6 +6,7 @@ from __future__ import print_function
 import os
 import gc
 import argparse
+from turtle import window_height
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -111,7 +112,7 @@ def test_one_epoch(args, net, test_loader):
         # TODO: the MLGS formula has -!!!!!!!!!!!
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
-        kl = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+        kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp(), dim = 1), dim = 0)
 
         # kls.append(kl.numpy())
 
@@ -233,7 +234,7 @@ def train_one_epoch(args, net, train_loader, opt):
         # TODO: the MLGS formula has -!!!!!!!!!!!
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
-        kl = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+        kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp(), dim = 1), dim = 0)
 
         # kls.append(kl.numpy())
 
@@ -325,12 +326,16 @@ def test(args, net, test_loader, boardio, textio):
 
 def train(args, net, train_loader, test_loader, boardio, textio):
     print(f'Warning: we removed weight_decay!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+    my_weight_decay = 0.0
+    if len(train_loader) > 100:
+        assert my_weight_decay > 1e-6
+    # assert my_weight_decay > 1e-6
     if args.use_sgd:
         print("Use SGD")
-        opt = optim.SGD(net.parameters(), lr=args.lr * 100, momentum=args.momentum, weight_decay=1e-4)
+        opt = optim.SGD(net.parameters(), lr=args.lr * 100, momentum=args.momentum, weight_decay=my_weight_decay)
     else:
         print("Use Adam")
-        opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=1e-4)
+        opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=my_weight_decay)
     scheduler = MultiStepLR(opt, milestones=[75, 150, 200], gamma=0.1)
 
 
@@ -367,7 +372,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         train_rotations_ab_pred, \
         train_translations_ab_pred, train_rotations_ba, train_translations_ba, train_rotations_ba_pred, \
         train_translations_ba_pred, train_eulers_ab, train_eulers_ba = train_one_epoch(args, net, train_loader, opt)
-        test_loss, test_cycle_loss, \
+        test_kl_loss, test_loss, test_cycle_loss, \
         test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
         test_rotations_ab_pred, \
         test_translations_ab_pred, test_rotations_ba, test_translations_ba, test_rotations_ba_pred, \
@@ -444,111 +449,117 @@ def train(args, net, train_loader, test_loader, boardio, textio):
                 torch.save(net.state_dict(), 'checkpoints/%s/models/model.best.t7' % args.exp_name)
 
         textio.cprint('==TRAIN==')
-        textio.cprint('A--------->B')
+        # textio.cprint('A--------->B')
         textio.cprint('EPOCH:: %d, KL-Loss: %f, Loss: %f, Cycle Loss:, %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
                       % (epoch, train_kl_loss, train_loss, train_cycle_loss, train_mse_ab, train_rmse_ab, train_mae_ab, train_r_mse_ab,
                          train_r_rmse_ab, train_r_mae_ab, train_t_mse_ab, train_t_rmse_ab, train_t_mae_ab))
-        textio.cprint('B--------->A')
-        textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
-                      'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, train_loss, train_mse_ba, train_rmse_ba, train_mae_ba, train_r_mse_ba, train_r_rmse_ba,
-                         train_r_mae_ba, train_t_mse_ba, train_t_rmse_ba, train_t_mae_ba))
+        # textio.cprint('B--------->A')
+        # textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        #               'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
+        #               % (epoch, train_loss, train_mse_ba, train_rmse_ba, train_mae_ba, train_r_mse_ba, train_r_rmse_ba,
+        #                  train_r_mae_ba, train_t_mse_ba, train_t_rmse_ba, train_t_mae_ba))
 
         textio.cprint('==TEST==')
-        textio.cprint('A--------->B')
-        textio.cprint('EPOCH:: %d, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        # textio.cprint('A--------->B')
+        textio.cprint('EPOCH:: %d, KL-Loss: %f, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab, test_r_mse_ab,
+                      % (epoch, test_kl_loss, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab, test_r_mse_ab,
                          test_r_rmse_ab, test_r_mae_ab, test_t_mse_ab, test_t_rmse_ab, test_t_mae_ab))
-        textio.cprint('B--------->A')
-        textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
-                      'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, test_loss, test_mse_ba, test_rmse_ba, test_mae_ba, test_r_mse_ba, test_r_rmse_ba,
-                         test_r_mae_ba, test_t_mse_ba, test_t_rmse_ba, test_t_mae_ba))
+        # textio.cprint('B--------->A')
+        # textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        #               'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
+        #               % (epoch, test_loss, test_mse_ba, test_rmse_ba, test_mae_ba, test_r_mse_ba, test_r_rmse_ba,
+        #                  test_r_mae_ba, test_t_mse_ba, test_t_rmse_ba, test_t_mae_ba))
 
         textio.cprint('==BEST TEST==')
-        textio.cprint('A--------->B')
+        # textio.cprint('A--------->B')
         textio.cprint('EPOCH:: %d, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
                       % (epoch, best_test_loss, best_test_cycle_loss, best_test_mse_ab, best_test_rmse_ab,
                          best_test_mae_ab, best_test_r_mse_ab, best_test_r_rmse_ab,
                          best_test_r_mae_ab, best_test_t_mse_ab, best_test_t_rmse_ab, best_test_t_mae_ab))
-        textio.cprint('B--------->A')
-        textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
-                      'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, best_test_loss, best_test_mse_ba, best_test_rmse_ba, best_test_mae_ba,
-                         best_test_r_mse_ba, best_test_r_rmse_ba,
-                         best_test_r_mae_ba, best_test_t_mse_ba, best_test_t_rmse_ba, best_test_t_mae_ba))
+        # textio.cprint('B--------->A')
+        # textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        #               'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
+        #               % (epoch, best_test_loss, best_test_mse_ba, best_test_rmse_ba, best_test_mae_ba,
+        #                  best_test_r_mse_ba, best_test_r_rmse_ba,
+        #                  best_test_r_mae_ba, best_test_t_mse_ba, best_test_t_rmse_ba, best_test_t_mae_ba))
 
-        boardio.add_scalar('A->B/train/loss', train_loss, epoch)
-        boardio.add_scalar('A->B/train/kl-loss', train_kl_loss, epoch)
-        boardio.add_scalar('A->B/train/MSE', train_mse_ab, epoch)
-        boardio.add_scalar('A->B/train/RMSE', train_rmse_ab, epoch)
-        boardio.add_scalar('A->B/train/MAE', train_mae_ab, epoch)
-        boardio.add_scalar('A->B/train/rotation/MSE', train_r_mse_ab, epoch)
-        boardio.add_scalar('A->B/train/rotation/RMSE', train_r_rmse_ab, epoch)
-        boardio.add_scalar('A->B/train/rotation/MAE', train_r_mae_ab, epoch)
-        boardio.add_scalar('A->B/train/translation/MSE', train_t_mse_ab, epoch)
-        boardio.add_scalar('A->B/train/translation/RMSE', train_t_rmse_ab, epoch)
-        boardio.add_scalar('A->B/train/translation/MAE', train_t_mae_ab, epoch)
+        boardio.add_scalar('train/loss', train_loss, epoch)
+        # boardio.add_scalars('train/loss', {'train' : train_loss, 'val' : test_loss }, epoch)
+        
+        boardio.add_scalar('train/kl-loss',  train_kl_loss, epoch)
+        # boardio.add_scalars('train/kl-loss', {'train' : train_kl_loss, 'val' : test_kl_loss }, epoch)
+        # boardio.add_scalar('A->B/train/MSE', train_mse_ab, epoch)
+        # boardio.add_scalar('A->B/train/RMSE', train_rmse_ab, epoch)
+        # boardio.add_scalar('A->B/train/MAE', train_mae_ab, epoch)
+        boardio.add_scalar('train/rotation/MSE', train_r_mse_ab, epoch)
+        # boardio.add_scalars('train/rotation/MSE', {'train' : train_r_mse_ab, 'val' : test_r_mse_ab }, epoch)
+        # boardio.add_scalar('A->B/train/rotation/RMSE', train_r_rmse_ab, epoch)
+        # boardio.add_scalar('A->B/train/rotation/MAE', train_r_mae_ab, epoch)
+        boardio.add_scalar('train/translation/MSE', train_t_mse_ab, epoch)
+        # boardio.add_scalars('train/translation/MSE', {'train' : train_t_mse_ab, 'val' : test_t_mse_ab }, epoch)
+        # boardio.add_scalar('A->B/train/translation/RMSE', train_t_rmse_ab, epoch)
+        # boardio.add_scalar('A->B/train/translation/MAE', train_t_mae_ab, epoch)
 
-        boardio.add_scalar('B->A/train/loss', train_loss, epoch)
-        boardio.add_scalar('B->A/train/MSE', train_mse_ba, epoch)
-        boardio.add_scalar('B->A/train/RMSE', train_rmse_ba, epoch)
-        boardio.add_scalar('B->A/train/MAE', train_mae_ba, epoch)
-        boardio.add_scalar('B->A/train/rotation/MSE', train_r_mse_ba, epoch)
-        boardio.add_scalar('B->A/train/rotation/RMSE', train_r_rmse_ba, epoch)
-        boardio.add_scalar('B->A/train/rotation/MAE', train_r_mae_ba, epoch)
-        boardio.add_scalar('B->A/train/translation/MSE', train_t_mse_ba, epoch)
-        boardio.add_scalar('B->A/train/translation/RMSE', train_t_rmse_ba, epoch)
-        boardio.add_scalar('B->A/train/translation/MAE', train_t_mae_ba, epoch)
+        # boardio.add_scalar('B->A/train/loss', train_loss, epoch)
+        # boardio.add_scalar('B->A/train/MSE', train_mse_ba, epoch)
+        # boardio.add_scalar('B->A/train/RMSE', train_rmse_ba, epoch)
+        # boardio.add_scalar('B->A/train/MAE', train_mae_ba, epoch)
+        # boardio.add_scalar('B->A/train/rotation/MSE', train_r_mse_ba, epoch)
+        # boardio.add_scalar('B->A/train/rotation/RMSE', train_r_rmse_ba, epoch)
+        # boardio.add_scalar('B->A/train/rotation/MAE', train_r_mae_ba, epoch)
+        # boardio.add_scalar('B->A/train/translation/MSE', train_t_mse_ba, epoch)
+        # boardio.add_scalar('B->A/train/translation/RMSE', train_t_rmse_ba, epoch)
+        # boardio.add_scalar('B->A/train/translation/MAE', train_t_mae_ba, epoch)
 
         ############TEST
-        boardio.add_scalar('A->B/test/loss', test_loss, epoch)
-        boardio.add_scalar('A->B/test/MSE', test_mse_ab, epoch)
-        boardio.add_scalar('A->B/test/RMSE', test_rmse_ab, epoch)
-        boardio.add_scalar('A->B/test/MAE', test_mae_ab, epoch)
-        boardio.add_scalar('A->B/test/rotation/MSE', test_r_mse_ab, epoch)
-        boardio.add_scalar('A->B/test/rotation/RMSE', test_r_rmse_ab, epoch)
-        boardio.add_scalar('A->B/test/rotation/MAE', test_r_mae_ab, epoch)
-        boardio.add_scalar('A->B/test/translation/MSE', test_t_mse_ab, epoch)
-        boardio.add_scalar('A->B/test/translation/RMSE', test_t_rmse_ab, epoch)
-        boardio.add_scalar('A->B/test/translation/MAE', test_t_mae_ab, epoch)
+        boardio.add_scalar('test/loss', test_loss, epoch)
+        boardio.add_scalar('test/kl-loss', test_kl_loss, epoch)
+        # boardio.add_scalar('A->B/test/MSE', test_mse_ab, epoch)
+        # boardio.add_scalar('A->B/test/RMSE', test_rmse_ab, epoch)
+        # boardio.add_scalar('A->B/test/MAE', test_mae_ab, epoch)
+        boardio.add_scalar('test/rotation/MSE', test_r_mse_ab, epoch)
+        # boardio.add_scalar('A->B/test/rotation/RMSE', test_r_rmse_ab, epoch)
+        # boardio.add_scalar('A->B/test/rotation/MAE', test_r_mae_ab, epoch)
+        boardio.add_scalar('test/translation/MSE', test_t_mse_ab, epoch)
+        # boardio.add_scalar('A->B/test/translation/RMSE', test_t_rmse_ab, epoch)
+        # boardio.add_scalar('A->B/test/translation/MAE', test_t_mae_ab, epoch)
 
-        boardio.add_scalar('B->A/test/loss', test_loss, epoch)
-        boardio.add_scalar('B->A/test/MSE', test_mse_ba, epoch)
-        boardio.add_scalar('B->A/test/RMSE', test_rmse_ba, epoch)
-        boardio.add_scalar('B->A/test/MAE', test_mae_ba, epoch)
-        boardio.add_scalar('B->A/test/rotation/MSE', test_r_mse_ba, epoch)
-        boardio.add_scalar('B->A/test/rotation/RMSE', test_r_rmse_ba, epoch)
-        boardio.add_scalar('B->A/test/rotation/MAE', test_r_mae_ba, epoch)
-        boardio.add_scalar('B->A/test/translation/MSE', test_t_mse_ba, epoch)
-        boardio.add_scalar('B->A/test/translation/RMSE', test_t_rmse_ba, epoch)
-        boardio.add_scalar('B->A/test/translation/MAE', test_t_mae_ba, epoch)
+        # boardio.add_scalar('B->A/test/loss', test_loss, epoch)
+        # boardio.add_scalar('B->A/test/MSE', test_mse_ba, epoch)
+        # boardio.add_scalar('B->A/test/RMSE', test_rmse_ba, epoch)
+        # boardio.add_scalar('B->A/test/MAE', test_mae_ba, epoch)
+        # boardio.add_scalar('B->A/test/rotation/MSE', test_r_mse_ba, epoch)
+        # boardio.add_scalar('B->A/test/rotation/RMSE', test_r_rmse_ba, epoch)
+        # boardio.add_scalar('B->A/test/rotation/MAE', test_r_mae_ba, epoch)
+        # boardio.add_scalar('B->A/test/translation/MSE', test_t_mse_ba, epoch)
+        # boardio.add_scalar('B->A/test/translation/RMSE', test_t_rmse_ba, epoch)
+        # boardio.add_scalar('B->A/test/translation/MAE', test_t_mae_ba, epoch)
 
         ############BEST TEST
-        boardio.add_scalar('A->B/best_test/loss', best_test_loss, epoch)
-        boardio.add_scalar('A->B/best_test/MSE', best_test_mse_ab, epoch)
-        boardio.add_scalar('A->B/best_test/RMSE', best_test_rmse_ab, epoch)
-        boardio.add_scalar('A->B/best_test/MAE', best_test_mae_ab, epoch)
-        boardio.add_scalar('A->B/best_test/rotation/MSE', best_test_r_mse_ab, epoch)
-        boardio.add_scalar('A->B/best_test/rotation/RMSE', best_test_r_rmse_ab, epoch)
-        boardio.add_scalar('A->B/best_test/rotation/MAE', best_test_r_mae_ab, epoch)
-        boardio.add_scalar('A->B/best_test/translation/MSE', best_test_t_mse_ab, epoch)
-        boardio.add_scalar('A->B/best_test/translation/RMSE', best_test_t_rmse_ab, epoch)
-        boardio.add_scalar('A->B/best_test/translation/MAE', best_test_t_mae_ab, epoch)
+        boardio.add_scalar('best_test/loss', best_test_loss, epoch)
+        # boardio.add_scalar('A->B/best_test/MSE', best_test_mse_ab, epoch)
+        # boardio.add_scalar('A->B/best_test/RMSE', best_test_rmse_ab, epoch)
+        # boardio.add_scalar('A->B/best_test/MAE', best_test_mae_ab, epoch)
+        boardio.add_scalar('best_test/rotation/MSE', best_test_r_mse_ab, epoch)
+        # boardio.add_scalar('A->B/best_test/rotation/RMSE', best_test_r_rmse_ab, epoch)
+        # boardio.add_scalar('A->B/best_test/rotation/MAE', best_test_r_mae_ab, epoch)
+        boardio.add_scalar('best_test/translation/MSE', best_test_t_mse_ab, epoch)
+        # boardio.add_scalar('A->B/best_test/translation/RMSE', best_test_t_rmse_ab, epoch)
+        # boardio.add_scalar('A->B/best_test/translation/MAE', best_test_t_mae_ab, epoch)
 
-        boardio.add_scalar('B->A/best_test/loss', best_test_loss, epoch)
-        boardio.add_scalar('B->A/best_test/MSE', best_test_mse_ba, epoch)
-        boardio.add_scalar('B->A/best_test/RMSE', best_test_rmse_ba, epoch)
-        boardio.add_scalar('B->A/best_test/MAE', best_test_mae_ba, epoch)
-        boardio.add_scalar('B->A/best_test/rotation/MSE', best_test_r_mse_ba, epoch)
-        boardio.add_scalar('B->A/best_test/rotation/RMSE', best_test_r_rmse_ba, epoch)
-        boardio.add_scalar('B->A/best_test/rotation/MAE', best_test_r_mae_ba, epoch)
-        boardio.add_scalar('B->A/best_test/translation/MSE', best_test_t_mse_ba, epoch)
-        boardio.add_scalar('B->A/best_test/translation/RMSE', best_test_t_rmse_ba, epoch)
-        boardio.add_scalar('B->A/best_test/translation/MAE', best_test_t_mae_ba, epoch)
+        # boardio.add_scalar('B->A/best_test/loss', best_test_loss, epoch)
+        # boardio.add_scalar('B->A/best_test/MSE', best_test_mse_ba, epoch)
+        # boardio.add_scalar('B->A/best_test/RMSE', best_test_rmse_ba, epoch)
+        # boardio.add_scalar('B->A/best_test/MAE', best_test_mae_ba, epoch)
+        # boardio.add_scalar('B->A/best_test/rotation/MSE', best_test_r_mse_ba, epoch)
+        # boardio.add_scalar('B->A/best_test/rotation/RMSE', best_test_r_rmse_ba, epoch)
+        # boardio.add_scalar('B->A/best_test/rotation/MAE', best_test_r_mae_ba, epoch)
+        # boardio.add_scalar('B->A/best_test/translation/MSE', best_test_t_mse_ba, epoch)
+        # boardio.add_scalar('B->A/best_test/translation/RMSE', best_test_t_rmse_ba, epoch)
+        # boardio.add_scalar('B->A/best_test/translation/MAE', best_test_t_mae_ba, epoch)
 
         if torch.cuda.device_count() > 1:
             torch.save(net.module.state_dict(), 'checkpoints/%s/models/model.%d.t7' % (args.exp_name, epoch))
