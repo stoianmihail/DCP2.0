@@ -152,6 +152,7 @@ def train_one_epoch(args, net, train_loader, opt):
     mae_ba = 0
 
     total_loss = 0
+    total_kl_loss = 0
     total_cycle_loss = 0
     num_examples = 0
     rotations_ab = []
@@ -209,8 +210,11 @@ def train_one_epoch(args, net, train_loader, opt):
         print(f'dim=1: {torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1).shape}')
         kl = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
 
+        # kls.append(kl.numpy())
+
         print(f'kl.shape={kl.shape}, kl={kl}')
         loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) + kl
+        kl_loss = kl
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
             translation_loss = torch.mean((torch.matmul(rotation_ba_pred.transpose(2, 1),
@@ -223,6 +227,7 @@ def train_one_epoch(args, net, train_loader, opt):
         loss.backward()
         opt.step()
         total_loss += loss.item() * batch_size
+        total_kl_loss += kl_loss.item() * batch_size
 
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
@@ -246,7 +251,7 @@ def train_one_epoch(args, net, train_loader, opt):
     eulers_ab = np.concatenate(eulers_ab, axis=0)
     eulers_ba = np.concatenate(eulers_ba, axis=0)
 
-    return total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
+    return total_kl_loss * 1.0 / num_examples, total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
            mse_ab * 1.0 / num_examples, mae_ab * 1.0 / num_examples, \
            mse_ba * 1.0 / num_examples, mae_ba * 1.0 / num_examples, rotations_ab, \
            translations_ab, rotations_ab_pred, translations_ab_pred, rotations_ba, \
@@ -330,7 +335,9 @@ def train(args, net, train_loader, test_loader, boardio, textio):
 
     for epoch in range(args.epochs):
         scheduler.step()
-        train_loss, train_cycle_loss, \
+
+        # TODO: maybe add the delta in each dimension.
+        train_kl_loss, train_loss, train_cycle_loss, \
         train_mse_ab, train_mae_ab, train_mse_ba, train_mae_ba, train_rotations_ab, train_translations_ab, \
         train_rotations_ab_pred, \
         train_translations_ab_pred, train_rotations_ba, train_translations_ba, train_rotations_ba_pred, \
@@ -413,9 +420,9 @@ def train(args, net, train_loader, test_loader, boardio, textio):
 
         textio.cprint('==TRAIN==')
         textio.cprint('A--------->B')
-        textio.cprint('EPOCH:: %d, Loss: %f, Cycle Loss:, %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        textio.cprint('EPOCH:: %d, KL-Loss: %f, Loss: %f, Cycle Loss:, %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, train_loss, train_cycle_loss, train_mse_ab, train_rmse_ab, train_mae_ab, train_r_mse_ab,
+                      % (epoch, train_kl_loss, train_loss, train_cycle_loss, train_mse_ab, train_rmse_ab, train_mae_ab, train_r_mse_ab,
                          train_r_rmse_ab, train_r_mae_ab, train_t_mse_ab, train_t_rmse_ab, train_t_mae_ab))
         textio.cprint('B--------->A')
         textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
@@ -450,6 +457,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
                          best_test_r_mae_ba, best_test_t_mse_ba, best_test_t_rmse_ba, best_test_t_mae_ba))
 
         boardio.add_scalar('A->B/train/loss', train_loss, epoch)
+        boardio.add_scalar('A->B/train/kl-loss', train_kl_loss, epoch)
         boardio.add_scalar('A->B/train/MSE', train_mse_ab, epoch)
         boardio.add_scalar('A->B/train/RMSE', train_rmse_ab, epoch)
         boardio.add_scalar('A->B/train/MAE', train_mae_ab, epoch)

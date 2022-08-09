@@ -121,9 +121,9 @@ class ModelNet40(Dataset):
         #     pointcloud = jitter_pointcloud(pointcloud)
         if self.partition != 'train':
             np.random.seed(item)
-        anglex = 0# np.random.uniform() * np.pi / self.factor
-        angley = 0#np.random.uniform() * np.pi / self.factor
-        anglez = 0#np.random.uniform() * np.pi / self.factor
+        anglex = 0#np.pi / 8# np.random.uniform() * np.pi / self.factor
+        angley = 0#np.pi / 8#np.random.uniform() * np.pi / self.factor
+        anglez = 0#np.pi / 8#np.random.uniform() * np.pi / self.factor
 
         cosx = np.cos(anglex)
         cosy = np.cos(angley)

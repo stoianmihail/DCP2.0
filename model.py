@@ -584,8 +584,8 @@ class Sprinter(nn.Module):
         log_var = self.nn(combined_embedding)
         std = torch.exp(0.5 * log_var)
 
-        log_var = torch.zeros_like(log_var)
-        assert not log_var.requires_grad
+        # log_var = torch.zeros_like(log_var)
+        # assert not log_var.requires_grad
 
         print(f'std={std}')
 
@@ -596,14 +596,16 @@ class Sprinter(nn.Module):
         # TODO: wait, is this the same for all?
         eps = torch.randn_like(std)
         print(f'eps={eps.shape}')
-        z = mu#eps * std + mu
-        
+        z = eps * std + torch.rad2deg(mu)
+
+        # Enforce positive angles <-- what if we're at pi / 2 <-- 
+        z = torch.abs(z)
         print(f'z={z}')
         
         # dist = torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=torch.diag(sigma))
         # z = dist.rsample()
         print(f'z.shape={z.shape}')
-        rotation_ab = euler_angles_to_rotation_matrix(z, "zyx")
+        rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
         
         # print(f'pre_sigma={pre_sigma.shape}')
 
