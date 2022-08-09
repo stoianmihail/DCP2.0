@@ -155,6 +155,9 @@ class ModelNet40(Dataset):
 
         # print(f'permute={self.permute}, gaussian_noise={self.gaussian_noise}')
 
+        if len(self) > 100:
+            assert self.permute and self.gaussian_noise
+
         if self.permute:
             pointcloud1 = np.random.permutation(pointcloud1.T).T
             pointcloud2 = np.random.permutation(pointcloud2.T).T

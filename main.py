@@ -326,7 +326,7 @@ def test(args, net, test_loader, boardio, textio):
 
 def train(args, net, train_loader, test_loader, boardio, textio):
     print(f'Warning: we removed weight_decay!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-    my_weight_decay = 0.0
+    my_weight_decay = 1e-4
     if len(train_loader) > 100:
         assert my_weight_decay > 1e-6
     # assert my_weight_decay > 1e-6
@@ -335,7 +335,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         opt = optim.SGD(net.parameters(), lr=args.lr * 100, momentum=args.momentum, weight_decay=my_weight_decay)
     else:
         print("Use Adam")
-        opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=my_weight_decay)
+        opt = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=my_weight_decay)
     scheduler = MultiStepLR(opt, milestones=[75, 150, 200], gamma=0.1)
 
 
