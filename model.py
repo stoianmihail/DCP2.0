@@ -16,7 +16,7 @@ from torch.autograd import Variable
 from util import quat2mat
 from difficp import ICP6DoF
 
-from difficp.utils.geometry_utils import euler_angles_to_rotation_matrix
+from difficp.utils.geometry_utils import euler_angles_to_rotation_matrix, rotation_matrix_to_euler_angles
 
 torch.cuda.empty_cache()
 # Part of the code is referred from: http://nlp.seas.harvard.edu/2018/04/03/attention.html#positional-encoding
@@ -403,7 +403,7 @@ class SVDHead(nn.Module):
 
         U, S, V = [], [], []
         R = []
-
+        mus = []
         for i in range(src.size(0)):
             u, s, v = torch.svd(H[i])
             r = torch.matmul(v, u.transpose(1, 0).contiguous())
@@ -414,6 +414,7 @@ class SVDHead(nn.Module):
                 r = torch.matmul(v, u.transpose(1, 0).contiguous())
                 # r = r * self.reflect
             R.append(r)
+            mus.append(rotation_matrix_to_euler_angles(r, "zyx"))
 
             U.append(u)
             S.append(s)
@@ -425,7 +426,7 @@ class SVDHead(nn.Module):
         R = torch.stack(R, dim=0)
 
         t = torch.matmul(-R, src.mean(dim=2, keepdim=True)) + src_corr.mean(dim=2, keepdim=True)
-        return R, t.view(batch_size, 3)
+        return R, t.view(batch_size, 3), torch.stack(mus, dim=0)
 
 
 class DCP(nn.Module):
@@ -474,6 +475,16 @@ class DCP(nn.Module):
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
         return rotation_ab, translation_ab, rotation_ba, translation_ba
 
+class MyBatchNorm1d(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.fn = nn.BatchNorm1d(dim)
+
+    def forward(self, x):
+        if x.size(0) > 1:
+            return self.fn(x) 
+        return x
+
 class Sprinter(nn.Module):
     def __init__(self, args):
         super(Sprinter, self).__init__()
@@ -507,6 +518,15 @@ class Sprinter(nn.Module):
         self.difficp = ICP6DoF(differentiable=True, iters_max=1, **icp_kwargs)
         self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
         self.failures = 0
+
+        self.nn = nn.Sequential(
+            nn.Linear(self.emb_dims * 2, self.emb_dims // 2),
+            MyBatchNorm1d(self.emb_dims // 2),
+            nn.LeakyReLU(),
+            nn.Linear(self.emb_dims // 2, self.emb_dims // 8),
+            MyBatchNorm1d(self.emb_dims // 8),
+            nn.LeakyReLU(),
+            nn.Linear(self.emb_dims // 8, 3))
 
     def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
         batch_size = src.size()[0]
@@ -547,11 +567,63 @@ class Sprinter(nn.Module):
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
+        _, tmp, mu = self.head(src_embedding, tgt_embedding, src, tgt)
+
+        print(f'mu={mu}')
+
+        translation_ab = torch.zeros_like(tmp)
         # if self.cycle:
         #     rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
         # else:
 
+        combined_embedding = torch.cat([src_embedding, tgt_embedding], 1)
+        combined_embedding = F.adaptive_max_pool1d(combined_embedding, 1).squeeze(-1)
+
+        print(f'combined_embedding={combined_embedding}, shape={combined_embedding.shape}')
+
+        log_var = self.nn(combined_embedding)
+        std = torch.exp(0.5 * log_var)
+
+        log_var = torch.zeros_like(log_var)
+        assert not log_var.requires_grad
+
+        print(f'std={std}')
+
+        # print(f'sigma.shape={std}')
+        # print(f'diag={torch.diag(sigma)}')
+        
+        # std = torch.exp(0.5 * logvar)
+        # TODO: wait, is this the same for all?
+        eps = torch.randn_like(std)
+        print(f'eps={eps.shape}')
+        z = mu#eps * std + mu
+        
+        print(f'z={z}')
+        
+        # dist = torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=torch.diag(sigma))
+        # z = dist.rsample()
+        print(f'z.shape={z.shape}')
+        rotation_ab = euler_angles_to_rotation_matrix(z, "zyx")
+        
+        # print(f'pre_sigma={pre_sigma.shape}')
+
+        # input = torch.cat([pre_sigma, mu], 1)
+        # print(f'input={input.shape}')
+        # sigma = self.compressor(input)
+        # assert sigma.shape == pre_sigma.shape
+
+        
+        # Sample.
+        # print(f'mu={mu}')
+
+                # self.candidates = self.mus + self.sigmas * torch.randn(self.planning_horizon, self.batch_size, self.n_candidates, self.action_size).to(self.device)  # (H, B, C, 6)
+
+        # sigma = torch.exp(self.nn(com))
+
+        # curr_num_cands = self.num_cands if self.training else 1
+        # z, curr_sigmas, ratio = self.reparameterize(batch_size, curr_num_cands, mu, sigma)
+
+        assert not translation_ab.requires_grad
         rotation_ab, translation_ab = self._refine_with_icp(
             src, tgt, rotation_ab, translation_ab
         )
@@ -565,4 +637,4 @@ class Sprinter(nn.Module):
         rotation_ba = rotation_ab.transpose(2, 1).contiguous()
         translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
 
-        return rotation_ab, translation_ab, rotation_ba, translation_ba
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, (mu, log_var)

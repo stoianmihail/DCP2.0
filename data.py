@@ -78,7 +78,7 @@ def check(data_type, pc, num_points):
     return False
     
 class ModelNet40(Dataset):
-    def __init__(self, num_points, data_size=None, partition='train', data_type=None, gaussian_noise=False, unseen=False, factor=4):
+    def __init__(self, num_points, data_size=None, partition='train', data_type=None, gaussian_noise=False, unseen=False, permute=False, factor=4):
         self.data, self.label = load_data(partition)
         self.data_size = data_size
 
@@ -102,6 +102,7 @@ class ModelNet40(Dataset):
         self.num_points = num_points
         self.partition = partition
         self.gaussian_noise = gaussian_noise
+        self.permute = permute
         self.unseen = unseen
         self.label = self.label.squeeze()
         self.factor = factor
@@ -120,9 +121,9 @@ class ModelNet40(Dataset):
         #     pointcloud = jitter_pointcloud(pointcloud)
         if self.partition != 'train':
             np.random.seed(item)
-        anglex = np.random.uniform() * np.pi / self.factor
-        angley = np.random.uniform() * np.pi / self.factor
-        anglez = np.random.uniform() * np.pi / self.factor
+        anglex = 0# np.random.uniform() * np.pi / self.factor
+        angley = 0#np.random.uniform() * np.pi / self.factor
+        anglez = 0#np.random.uniform() * np.pi / self.factor
 
         cosx = np.cos(anglex)
         cosy = np.cos(angley)
@@ -141,8 +142,7 @@ class ModelNet40(Dataset):
                         [0, 0, 1]])
         R_ab = Rx.dot(Ry).dot(Rz)
         R_ba = R_ab.T
-        translation_ab = np.array([np.random.uniform(-0.5, 0.5), np.random.uniform(-0.5, 0.5),
-                                   np.random.uniform(-0.5, 0.5)])
+        translation_ab = np.array([0.0, 0.0, 0.0])# np.array([np.random.uniform(-0.5, 0.5), np.random.uniform(-0.5, 0.5), np.random.uniform(-0.5, 0.5)])
         translation_ba = -R_ba.dot(translation_ab)
 
         pointcloud1 = pointcloud.T
@@ -153,8 +153,11 @@ class ModelNet40(Dataset):
         euler_ab = np.asarray([anglez, angley, anglex])
         euler_ba = -euler_ab[::-1]
 
-        pointcloud1 = np.random.permutation(pointcloud1.T).T
-        pointcloud2 = np.random.permutation(pointcloud2.T).T
+        print(f'permute={self.permute}, gaussian_noise={self.gaussian_noise}')
+
+        if self.permute:
+            pointcloud1 = np.random.permutation(pointcloud1.T).T
+            pointcloud2 = np.random.permutation(pointcloud2.T).T
 
         if self.gaussian_noise:
             pointcloud1 = jitter_pointcloud(pointcloud1)

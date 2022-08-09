@@ -80,7 +80,7 @@ def test_one_epoch(args, net, test_loader):
 
         batch_size = src.size(0)
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, _ = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -178,7 +178,7 @@ def train_one_epoch(args, net, train_loader, opt):
         batch_size = src.size(0)
         opt.zero_grad()
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, q_z = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -198,8 +198,19 @@ def train_one_epoch(args, net, train_loader, opt):
         transformed_target = transform_point_cloud(target, rotation_ba_pred, translation_ba_pred)
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
-        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-               + F.mse_loss(translation_ab_pred, translation_ab)
+        # loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+            #    + F.mse_loss(translation_ab_pred, translation_ab)
+        # kl = torch.distributions.kl_divergence(
+        #     q_z, 
+        #     torch.distributions.Normal(torch.zeros, 1.)
+        # )
+        mu, log_var = q_z
+        print(f'mu.shape={mu.shape}, log_var.shape={log_var.shape}')
+        print(f'dim=1: {torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1).shape}')
+        kl = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+
+        print(f'kl.shape={kl.shape}, kl={kl}')
+        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) + kl
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
             translation_loss = torch.mean((torch.matmul(rotation_ba_pred.transpose(2, 1),
@@ -283,12 +294,13 @@ def test(args, net, test_loader, boardio, textio):
 
 
 def train(args, net, train_loader, test_loader, boardio, textio):
+    print(f'Warning: we removed weight_decay!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
     if args.use_sgd:
         print("Use SGD")
-        opt = optim.SGD(net.parameters(), lr=args.lr * 100, momentum=args.momentum, weight_decay=1e-4)
+        opt = optim.SGD(net.parameters(), lr=args.lr * 100, momentum=args.momentum)#, weight_decay=1e-4)
     else:
         print("Use Adam")
-        opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=1e-4)
+        opt = optim.Adam(net.parameters(), lr=args.lr)#, weight_decay=1e-4)
     scheduler = MultiStepLR(opt, milestones=[75, 150, 200], gamma=0.1)
 
 
@@ -563,7 +575,9 @@ def main():
     parser.add_argument('--cycle', type=bool, default=False, metavar='N',
                         help='Whether to use cycle consistency')
     parser.add_argument('--gaussian_noise', type=bool, default=False, metavar='N',
-                        help='Wheter to add gaussian noise')
+                        help='Whether to add gaussian noise')
+    parser.add_argument('--permute', type=bool, default=False, metavar='N',
+                        help='Wheter to permute the point clouds')
     parser.add_argument('--unseen', type=bool, default=False, metavar='N',
                         help='Wheter to test on unseen category')
     parser.add_argument('--num_points', type=int, default=1024, metavar='N',
@@ -590,10 +604,12 @@ def main():
     if args.dataset == 'modelnet40':
         train_loader = DataLoader(
             ModelNet40(num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
+                        permute=args.permute,
                        unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
             batch_size=args.batch_size, shuffle=True, drop_last=True)
         test_loader = DataLoader(
             ModelNet40(num_points=args.num_points, partition='test', gaussian_noise=args.gaussian_noise,
+                        permute=args.permute,
                        unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
             batch_size=args.test_batch_size, shuffle=False, drop_last=False)
     else:
