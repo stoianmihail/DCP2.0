@@ -55,6 +55,7 @@ def test_one_epoch(args, net, test_loader):
     mae_ba = 0
 
     total_loss = 0
+    total_kl_loss = 0
     total_cycle_loss = 0
     num_examples = 0
     rotations_ab = []
@@ -80,7 +81,7 @@ def test_one_epoch(args, net, test_loader):
 
         batch_size = src.size(0)
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, _ = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, q_z = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -101,8 +102,26 @@ def test_one_epoch(args, net, test_loader):
 
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
-        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-               + F.mse_loss(translation_ab_pred, translation_ab)
+        
+        mu, log_var = q_z
+        # print(f'mu.shape={mu.shape}, log_var.shape={log_var.shape}')
+        # print(f'dim=1: {torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1).shape}')
+
+        # TODO: pay very much attention here!
+        # TODO: the MLGS formula has -!!!!!!!!!!!
+        # TODO: here it's a - before.
+        # TODO: and then applied `+ kl` in `loss`.
+        kl = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+
+        # kls.append(kl.numpy())
+
+        # print(f'kl.shape={kl.shape}, kl={kl}')
+        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) + kl
+        kl_loss = kl
+        
+        
+        # loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+        #        + F.mse_loss(translation_ab_pred, translation_ab)
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
             translation_loss = torch.mean((torch.matmul(rotation_ba_pred.transpose(2, 1),
@@ -113,6 +132,7 @@ def test_one_epoch(args, net, test_loader):
             loss = loss + cycle_loss * 0.1
 
         total_loss += loss.item() * batch_size
+        total_kl_loss += kl_loss.item() * batch_size
 
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
@@ -136,7 +156,7 @@ def test_one_epoch(args, net, test_loader):
     eulers_ab = np.concatenate(eulers_ab, axis=0)
     eulers_ba = np.concatenate(eulers_ba, axis=0)
 
-    return total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
+    return total_kl_loss * 1.0 / num_examples, total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
            mse_ab * 1.0 / num_examples, mae_ab * 1.0 / num_examples, \
            mse_ba * 1.0 / num_examples, mae_ba * 1.0 / num_examples, rotations_ab, \
            translations_ab, rotations_ab_pred, translations_ab_pred, rotations_ba, \
@@ -206,13 +226,18 @@ def train_one_epoch(args, net, train_loader, opt):
         #     torch.distributions.Normal(torch.zeros, 1.)
         # )
         mu, log_var = q_z
-        print(f'mu.shape={mu.shape}, log_var.shape={log_var.shape}')
-        print(f'dim=1: {torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1).shape}')
+        # print(f'mu.shape={mu.shape}, log_var.shape={log_var.shape}')
+        # print(f'dim=1: {torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1).shape}')
+
+        # TODO: pay very much attention here!
+        # TODO: the MLGS formula has -!!!!!!!!!!!
+        # TODO: here it's a - before.
+        # TODO: and then applied `+ kl` in `loss`.
         kl = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
 
         # kls.append(kl.numpy())
 
-        print(f'kl.shape={kl.shape}, kl={kl}')
+        # print(f'kl.shape={kl.shape}, kl={kl}')
         loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) + kl
         kl_loss = kl
         if args.cycle:
@@ -260,7 +285,7 @@ def train_one_epoch(args, net, train_loader, opt):
 
 def test(args, net, test_loader, boardio, textio):
 
-    test_loss, test_cycle_loss, \
+    test_kl_loss, test_loss, test_cycle_loss, \
     test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
     test_rotations_ab_pred, \
     test_translations_ab_pred, test_rotations_ba, test_translations_ba, test_rotations_ba_pred, \
@@ -286,9 +311,9 @@ def test(args, net, test_loader, boardio, textio):
 
     textio.cprint('==FINAL TEST==')
     textio.cprint('A--------->B')
-    textio.cprint('EPOCH:: %d, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+    textio.cprint('EPOCH:: %d, KL-Loss: %f, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                   'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                  % (-1, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab,
+                  % (-1, test_kl_loss, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab,
                      test_r_mse_ab, test_r_rmse_ab,
                      test_r_mae_ab, test_t_mse_ab, test_t_rmse_ab, test_t_mae_ab))
     textio.cprint('B--------->A')
@@ -302,10 +327,10 @@ def train(args, net, train_loader, test_loader, boardio, textio):
     print(f'Warning: we removed weight_decay!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
     if args.use_sgd:
         print("Use SGD")
-        opt = optim.SGD(net.parameters(), lr=args.lr * 100, momentum=args.momentum)#, weight_decay=1e-4)
+        opt = optim.SGD(net.parameters(), lr=args.lr * 100, momentum=args.momentum, weight_decay=1e-4)
     else:
         print("Use Adam")
-        opt = optim.Adam(net.parameters(), lr=args.lr)#, weight_decay=1e-4)
+        opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = MultiStepLR(opt, milestones=[75, 150, 200], gamma=0.1)
 
 

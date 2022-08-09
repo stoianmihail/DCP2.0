@@ -121,9 +121,9 @@ class ModelNet40(Dataset):
         #     pointcloud = jitter_pointcloud(pointcloud)
         if self.partition != 'train':
             np.random.seed(item)
-        anglex = 0#np.pi / 8# np.random.uniform() * np.pi / self.factor
-        angley = 0#np.pi / 8#np.random.uniform() * np.pi / self.factor
-        anglez = 0#np.pi / 8#np.random.uniform() * np.pi / self.factor
+        anglex = np.random.uniform() * np.pi / self.factor
+        angley = np.random.uniform() * np.pi / self.factor
+        anglez = np.random.uniform() * np.pi / self.factor
 
         cosx = np.cos(anglex)
         cosy = np.cos(angley)
@@ -153,7 +153,7 @@ class ModelNet40(Dataset):
         euler_ab = np.asarray([anglez, angley, anglex])
         euler_ba = -euler_ab[::-1]
 
-        print(f'permute={self.permute}, gaussian_noise={self.gaussian_noise}')
+        # print(f'permute={self.permute}, gaussian_noise={self.gaussian_noise}')
 
         if self.permute:
             pointcloud1 = np.random.permutation(pointcloud1.T).T

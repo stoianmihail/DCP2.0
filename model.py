@@ -569,7 +569,7 @@ class Sprinter(nn.Module):
 
         _, tmp, mu = self.head(src_embedding, tgt_embedding, src, tgt)
 
-        print(f'mu={mu}')
+        # print(f'mu={mu}')
 
         translation_ab = torch.zeros_like(tmp)
         # if self.cycle:
@@ -579,7 +579,7 @@ class Sprinter(nn.Module):
         combined_embedding = torch.cat([src_embedding, tgt_embedding], 1)
         combined_embedding = F.adaptive_max_pool1d(combined_embedding, 1).squeeze(-1)
 
-        print(f'combined_embedding={combined_embedding}, shape={combined_embedding.shape}')
+        # print(f'combined_embedding={combined_embedding}, shape={combined_embedding.shape}')
 
         log_var = self.nn(combined_embedding)
         std = torch.exp(0.5 * log_var)
@@ -587,7 +587,7 @@ class Sprinter(nn.Module):
         # log_var = torch.zeros_like(log_var)
         # assert not log_var.requires_grad
 
-        print(f'std={std}')
+        # print(f'std={std}')
 
         # print(f'sigma.shape={std}')
         # print(f'diag={torch.diag(sigma)}')
@@ -595,16 +595,16 @@ class Sprinter(nn.Module):
         # std = torch.exp(0.5 * logvar)
         # TODO: wait, is this the same for all?
         eps = torch.randn_like(std)
-        print(f'eps={eps.shape}')
+        # print(f'eps={eps.shape}')
         z = eps * std + torch.rad2deg(mu)
 
         # Enforce positive angles <-- what if we're at pi / 2 <-- 
         z = torch.abs(z)
-        print(f'z={z}')
+        # print(f'z={z}')
         
         # dist = torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=torch.diag(sigma))
         # z = dist.rsample()
-        print(f'z.shape={z.shape}')
+        # print(f'z.shape={z.shape}')
         rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
         
         # print(f'pre_sigma={pre_sigma.shape}')
