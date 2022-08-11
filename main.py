@@ -90,6 +90,7 @@ def test_one_epoch(args, net, test_loader):
             loss_i = torch.mean((transformed_src - target) ** 2, dim=[0, 1, 2]).item() * batch_size
             if best_loss == None or best_loss > loss_i:
                 rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, q_z = rotation_ab_pred_i, translation_ab_pred_i, rotation_ba_pred_i, translation_ba_pred_i, q_z_i
+                best_loss = loss_i
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
