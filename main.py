@@ -6,7 +6,7 @@ from __future__ import print_function
 import os
 import gc
 import argparse
-from turtle import window_height
+# from turtle import window_height
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -82,7 +82,14 @@ def test_one_epoch(args, net, test_loader):
 
         batch_size = src.size(0)
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, q_z = net(src, target)
+
+        best_loss = None
+        for i in range(5):
+            rotation_ab_pred_i, translation_ab_pred_i, rotation_ba_pred_i, translation_ba_pred_i, q_z_i = net(src, target)
+            transformed_src = transform_point_cloud(src, rotation_ab_pred_i, translation_ab_pred_i)
+            loss_i = torch.mean((transformed_src - target) ** 2, dim=[0, 1, 2]).item() * batch_size
+            if best_loss == None or best_loss > loss_i:
+                rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, q_z = rotation_ab_pred_i, translation_ab_pred_i, rotation_ba_pred_i, translation_ba_pred_i, q_z_i
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -105,6 +112,7 @@ def test_one_epoch(args, net, test_loader):
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
         
         mu, log_var = q_z
+        const_sigma = 5
         # print(f'mu.shape={mu.shape}, log_var.shape={log_var.shape}')
         # print(f'dim=1: {torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1).shape}')
 
@@ -112,7 +120,7 @@ def test_one_epoch(args, net, test_loader):
         # TODO: the MLGS formula has -!!!!!!!!!!!
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
-        kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp(), dim = 1), dim = 0)
+        kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp() / const_sigma - np.log(const_sigma), dim = 1), dim = 0)
 
         # kls.append(kl.numpy())
 
@@ -227,6 +235,7 @@ def train_one_epoch(args, net, train_loader, opt):
         #     torch.distributions.Normal(torch.zeros, 1.)
         # )
         mu, log_var = q_z
+        const_sigma = 5
         # print(f'mu.shape={mu.shape}, log_var.shape={log_var.shape}')
         # print(f'dim=1: {torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1).shape}')
 
@@ -234,7 +243,7 @@ def train_one_epoch(args, net, train_loader, opt):
         # TODO: the MLGS formula has -!!!!!!!!!!!
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
-        kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp(), dim = 1), dim = 0)
+        kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp() / const_sigma - np.log(const_sigma), dim = 1), dim = 0)
 
         # kls.append(kl.numpy())
 
