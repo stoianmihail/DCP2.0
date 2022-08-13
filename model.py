@@ -520,7 +520,7 @@ class Sprinter(nn.Module):
         self.difficp = ICP6DoF(differentiable=True, iters_max=1, **icp_kwargs)
         self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
         self.failures = 0
-
+        
         self.nn = nn.Sequential(
             nn.Linear(self.emb_dims * 2, self.emb_dims // 2),
             MyBatchNorm1d(self.emb_dims // 2),
@@ -617,10 +617,12 @@ class Sprinter(nn.Module):
             # print(f'diag={torch.diag(sigma)}')
             
             # std = torch.exp(0.5 * logvar)
+            z = torch.rad2deg(mu)
+            if self.training:
             # TODO: wait, is this the same for all?
-            eps = torch.randn_like(std)
-            # print(f'eps={eps.shape}')
-            z = eps * std + torch.rad2deg(mu)
+                eps = torch.randn_like(std)
+                # print(f'eps={eps.shape}')
+                z += eps * std
 
             # Enforce positive angles <-- what if we're at pi / 2 <-- 
             z = torch.abs(z)
@@ -648,10 +650,14 @@ class Sprinter(nn.Module):
 
             # print(f'log_cholesky={log_cholesky}')
 
-            eps = torch.randn_like(mu)
-            assert A.shape[0] == eps.shape[0]
             # print(f'A.shape={A.shape}, eps.shape={eps.shape}, eps.uns={eps.unsqueeze(-1).shape}')
-            z = torch.rad2deg(mu) + torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+            
+            z = torch.rad2deg(mu)
+            if self.training:
+                eps = torch.randn_like(mu)
+                assert A.shape[0] == eps.shape[0]
+                z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+            
             assert z.shape == mu.shape
             z = torch.abs(z)
 
