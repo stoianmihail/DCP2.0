@@ -538,11 +538,11 @@ class Sprinter(nn.Module):
             icp_init_pose[:3, :3] = rotation[i]
             icp_init_pose[:3, 3] = translation[i]
             try:
-                pred_pose = icp(
+                pred_pose, _, mse = icp(
                     src[i].transpose(0, 1),
                     tgt[i].transpose(0, 1),
                     icp_init_pose,
-                )[0]
+                )
                 rotations.append(pred_pose[:3, :3])
                 translations.append(pred_pose[:3, 3])
             except Exception as e:
@@ -551,7 +551,7 @@ class Sprinter(nn.Module):
                 translations.append(translation[i])
                 self.failures += 1
                 print(self.failures)
-        return torch.stack(rotations, 0), torch.stack(translations, 0)
+        return torch.stack(rotations, 0), torch.stack(translations, 0), mse
 
     def forward(self, *input):
         src = input[0]
@@ -626,7 +626,7 @@ class Sprinter(nn.Module):
         # z, curr_sigmas, ratio = self.reparameterize(batch_size, curr_num_cands, mu, sigma)
 
         assert not translation_ab.requires_grad
-        rotation_ab, translation_ab = self._refine_with_icp(
+        rotation_ab, translation_ab, mse = self._refine_with_icp(
             src, tgt, rotation_ab, translation_ab
         )
 
@@ -639,4 +639,4 @@ class Sprinter(nn.Module):
         rotation_ba = rotation_ab.transpose(2, 1).contiguous()
         translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
 
-        return rotation_ab, translation_ab, rotation_ba, translation_ba, (mu, log_var)
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, (mu, log_var), mse
