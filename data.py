@@ -78,7 +78,7 @@ def check(data_type, pc, num_points):
     return False
     
 class ModelNet40(Dataset):
-    def __init__(self, num_points, data_size=None, partition='train', data_type=None, gaussian_noise=False, unseen=False, permute=False, factor=4):
+    def __init__(self, usage, num_points, data_size=None, partition='train', data_type=None, gaussian_noise=False, unseen=False, permute=False, factor=4):
         self.data, self.label = load_data(partition)
         self.data_size = data_size
 
@@ -97,7 +97,17 @@ class ModelNet40(Dataset):
             self.data = self.data[:data_size]
             self.label = self.label[:data_size]
 
-        print(f'**************** DATA {partition} = {len(self.data)} *****************')
+        bound = int(usage['percentage'] * len(self.data) / 100)         
+        if usage['type'] == 'train' or usage['type'] == 'test':
+            self.data = self.data[:bound]
+            self.label = self.label[:bound]
+        else:
+            self.data = self.data[len(self.data) - bound:]
+            # In case you want to update this line, make sure you don't write `len(self.data) - bound`.
+            # In that case, `self.data` has been already modified.
+            self.label = self.label[len(self.label) - bound:]
+
+        print(f'**************** DATA usage={usage["type"]} = {len(self.data)} *****************')
 
         self.num_points = num_points
         self.partition = partition
