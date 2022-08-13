@@ -82,7 +82,7 @@ def test_one_epoch(args, net, test_loader):
 
         batch_size = src.size(0)
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, q_z = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -104,7 +104,7 @@ def test_one_epoch(args, net, test_loader):
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
         
-        mu, log_var = q_z
+        # mu, log_var = q_z
         # print(f'mu.shape={mu.shape}, log_var.shape={log_var.shape}')
         # print(f'dim=1: {torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1).shape}')
 
@@ -112,13 +112,21 @@ def test_one_epoch(args, net, test_loader):
         # TODO: the MLGS formula has -!!!!!!!!!!!
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
-        kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp(), dim = 1), dim = 0)
-
+        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+            - kl_loss
+            #  + F.mse_loss(translation_ab_pred, translation_ab) \
+            #  - kl_loss
+        
         # kls.append(kl.numpy())
 
         # print(f'kl.shape={kl.shape}, kl={kl}')
-        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) + kl
-        kl_loss = kl
+        # if args.formula == 'diag':
+        #     kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp(), dim = 1), dim = 0)
+        # elif args.formula == 'cov':
+        #     loss = None
+        # else:
+        #     assert 0, f'Formula {args.formula} not supported!'
+        # kl_loss = kl
         
         
         # loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
@@ -200,7 +208,7 @@ def train_one_epoch(args, net, train_loader, opt):
         batch_size = src.size(0)
         opt.zero_grad()
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, q_z = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -226,7 +234,7 @@ def train_one_epoch(args, net, train_loader, opt):
         #     q_z, 
         #     torch.distributions.Normal(torch.zeros, 1.)
         # )
-        mu, log_var = q_z
+        # mu, log_var = q_z
         # print(f'mu.shape={mu.shape}, log_var.shape={log_var.shape}')
         # print(f'dim=1: {torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1).shape}')
 
@@ -234,13 +242,16 @@ def train_one_epoch(args, net, train_loader, opt):
         # TODO: the MLGS formula has -!!!!!!!!!!!
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
-        kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp(), dim = 1), dim = 0)
+        # kl = torch.mean(-0.5 * torch.sum(1 + log_var - log_var.exp(), dim = 1), dim = 0)
 
         # kls.append(kl.numpy())
 
         # print(f'kl.shape={kl.shape}, kl={kl}')
-        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) + kl
-        kl_loss = kl
+        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+             - kl_loss
+            #  + F.mse_loss(translation_ab_pred, translation_ab) \
+             
+        # kl_loss = kl
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
             translation_loss = torch.mean((torch.matmul(rotation_ba_pred.transpose(2, 1),
@@ -570,6 +581,8 @@ def train(args, net, train_loader, test_loader, boardio, textio):
 
 def main():
     parser = argparse.ArgumentParser(description='Point Cloud Registration')
+    parser.add_argument('--formula', type=str, default='diag', metavar='N',
+                    help = 'Formula to use[\'diag\', \'cov\']')
     parser.add_argument('--data_size', type=int, default=None, metavar='N',
                     help = 'Data size to use in training')
     parser.add_argument('--data_type', type=str, default=None, metavar='N',
