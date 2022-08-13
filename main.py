@@ -279,7 +279,7 @@ def test(args, net, test_loader, textio):
     textio.cprint('==== FINAL TEST ====')
     textio.cprint('EPOCH:: %d, KL-Loss: %f, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                   'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                  % (-1, test_kl_loss, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab,
+                  % (-1, -test_kl_loss, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab,
                      test_r_mse_ab, test_r_rmse_ab,
                      test_r_mae_ab, test_t_mse_ab, test_t_rmse_ab, test_t_mae_ab))
 
@@ -374,7 +374,8 @@ def train(args, net, train_loader, val_loader, boardio, textio):
         val_t_rmse_ba = np.sqrt(val_t_mse_ba)
         val_t_mae_ba = np.mean(np.abs(val_translations_ba - val_translations_ba_pred))
 
-        if best_val_loss >= val_loss:
+        # Compare based on MSE.
+        if best_val_r_mse_ab >= val_r_mse_ab:
             best_val_loss = val_loss
             best_val_kl_loss = val_kl_loss
             best_val_cycle_loss = val_cycle_loss
@@ -411,38 +412,38 @@ def train(args, net, train_loader, val_loader, boardio, textio):
         textio.cprint('==== TRAIN ====')
         textio.cprint('EPOCH:: %d, KL-Loss: %f, Loss: %f, Cycle Loss:, %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, train_kl_loss, train_loss, train_cycle_loss, train_mse_ab, train_rmse_ab, train_mae_ab, train_r_mse_ab,
+                      % (epoch, -train_kl_loss, train_loss, train_cycle_loss, train_mse_ab, train_rmse_ab, train_mae_ab, train_r_mse_ab,
                          train_r_rmse_ab, train_r_mae_ab, train_t_mse_ab, train_t_rmse_ab, train_t_mae_ab))
 
         textio.cprint('==== VAL ====')
         textio.cprint('EPOCH:: %d, KL-Loss: %f, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, val_kl_loss, val_loss, val_cycle_loss, val_mse_ab, val_rmse_ab, val_mae_ab, val_r_mse_ab,
+                      % (epoch, -val_kl_loss, val_loss, val_cycle_loss, val_mse_ab, val_rmse_ab, val_mae_ab, val_r_mse_ab,
                          val_r_rmse_ab, val_r_mae_ab, val_t_mse_ab, val_t_rmse_ab, val_t_mae_ab))
 
         textio.cprint('==== BEST VAL ====')
         textio.cprint('EPOCH:: %d, KL-Loss: %f, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, best_val_kl_loss, best_val_loss, best_val_cycle_loss, best_val_mse_ab, best_val_rmse_ab,
+                      % (epoch, -best_val_kl_loss, best_val_loss, best_val_cycle_loss, best_val_mse_ab, best_val_rmse_ab,
                          best_val_mae_ab, best_val_r_mse_ab, best_val_r_rmse_ab,
                          best_val_r_mae_ab, best_val_t_mse_ab, best_val_t_rmse_ab, best_val_t_mae_ab))
 
         # Show results in tensorboard.
         # Training.
         boardio.add_scalar('train/loss', train_loss, epoch)        
-        boardio.add_scalar('train/kl-loss',  train_kl_loss, epoch)
+        boardio.add_scalar('train/kl-loss', -train_kl_loss, epoch)
         boardio.add_scalar('train/rotation/MSE', train_r_mse_ab, epoch)
         boardio.add_scalar('train/translation/MSE', train_t_mse_ab, epoch)
         
         # Validation.
         boardio.add_scalar('val/loss', val_loss, epoch)
-        boardio.add_scalar('val/kl-loss', val_kl_loss, epoch)
+        boardio.add_scalar('val/kl-loss', -val_kl_loss, epoch)
         boardio.add_scalar('val/rotation/MSE', val_r_mse_ab, epoch)
         boardio.add_scalar('val/translation/MSE', val_t_mse_ab, epoch)
         
         # Best validation.
         boardio.add_scalar('best_val/loss', best_val_loss, epoch)
-        boardio.add_scalar('best_val/kl-loss', best_val_kl_loss, epoch
+        boardio.add_scalar('best_val/kl-loss', -best_val_kl_loss, epoch)
         boardio.add_scalar('best_val/rotation/MSE', best_val_r_mse_ab, epoch)
         boardio.add_scalar('best_val/translation/MSE', best_val_t_mse_ab, epoch)
         
@@ -536,15 +537,15 @@ def main():
         train_loader = DataLoader(
             ModelNet40(usage={'type' : 'train', 'percentage' : 80}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
                         permute=args.permute,
-                       unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
+                       unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type, max_epochs=args.epochs),
             batch_size=args.batch_size, shuffle=True, drop_last=True)
-        
+
         # Load validation set, i.e., 20% from training set.
         val_loader = DataLoader(
             ModelNet40(usage={'type' : 'val', 'percentage' : 20}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
                         permute=args.permute,
-                       unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
-            batch_size=args.test_batch_size, shuffle=False, drop_last=False)    
+                       unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type, max_epochs=args.epochs),
+            batch_size=args.test_batch_size, shuffle=False, drop_last=False)
         
         # Load full test set.
         test_loader = DataLoader(
@@ -582,9 +583,9 @@ def main():
         net = nn.DataParallel(net)
         print("Let's use", torch.cuda.device_count(), "GPUs!")
     if args.eval:
-        test(args, net, test_loader, boardio, textio)
+        test(args, net, test_loader, textio)
     else:
-        train(args, net, train_loader, val_loader, textio)
+        train(args, net, train_loader, val_loader, boardio, textio)
 
     print('FINISH')
     boardio.close()

@@ -10,7 +10,6 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from torch.utils.data import Dataset
 
-
 # Part of the code is referred from: https://github.com/charlesq34/pointnet
 
 def download():
@@ -63,31 +62,42 @@ def check(data_type, pc, num_points):
     kEpsilon = 5e-1
     (_, T), (_, S) = compute_components(pc[:num_points].T, np.random.permutation(jitter_pointcloud(pc[:num_points]).T))
     assert np.allclose(T, S, atol=1e-1)
+    
+    # First two singular values are equal.
     if data_type == 'f2':
         return np.isclose(S[0], S[1], atol=kEpsilon)
+
+    # Last two singular values are equal.
     if data_type == 'l2':
         return np.isclose(S[1], S[2], atol=kEpsilon)
+    
+    # First two are last two singular values are equal.
     if data_type == 's2':
         return np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon)
+    
+    # All singular values are distinct pair-wise.
     if data_type == 'distinct':
-        # if not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon)):
-        #     if np.allclose(S, np.asarray([18.0120,  6.5846,  6.3458]), atol=1):
-        #         print(f'pc.T[0]={pc[0]}, jitter.T[0]={jitter_pointcloud(pc)[0]}')
-        #         print(f'S={S}, T={T}')
         return not (np.isclose(S[0], S[1], atol=kEpsilon) or np.isclose(S[1], S[2], atol=kEpsilon))
+    assert 0
     return False
     
 class ModelNet40(Dataset):
-    def __init__(self, usage, num_points, data_size=None, partition='train', data_type=None, gaussian_noise=False, unseen=False, permute=False, factor=4):
+    def __init__(self, usage, num_points, data_size=None, partition='train', data_type=None, gaussian_noise=False, unseen=False, permute=False, factor=4, max_epochs=250):
         self.data, self.label = load_data(partition)
         self.data_size = data_size
+
+        same_sv_count = 0
+        for index in range(len(self.data)):
+            if check('s2', self.data[index], num_points):
+                same_sv_count += 1
+        print(f'~~~~~~~~ Original statistics: SAME = {same_sv_count / len(self.data)}, DISTINCT = {1 - same_sv_count / len(self.data)} ~~~~~~~~')
 
         if data_type is not None:
             ls = []
             for index in range(len(self.data)):
                 if check(data_type, self.data[index], num_points):
                     ls.append(index)
-            # print(f'ls={ls}')
+            
             ls = np.asarray(ls)
             self.data = self.data[ls]
             self.label = self.label[ls]
@@ -97,19 +107,65 @@ class ModelNet40(Dataset):
             self.data = self.data[:data_size]
             self.label = self.label[:data_size]
 
+        # Generate indices for point clouds where the singular values are the same.
+        def generate_sv_indices():
+            same_sv_indices = []
+            for index in range(len(self.data)):
+                if check('s2', self.data[index], num_points):
+                    same_sv_indices.append(index)
+            distinct_sv_indices = list(set(range(len(self.data))) - set(same_sv_indices))
+
+            # Compute bounds.
+            same_sv_bound = int(usage['percentage'] * len(same_sv_indices) / 100)
+            distinct_sv_bound = int(usage['percentage'] * len(distinct_sv_indices) / 100)
+
+            # And return.
+            return (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound)
+
         bound = int(usage['percentage'] * len(self.data) / 100)         
         if usage['type'] == 'train' or usage['type'] == 'test':
-            self.data = self.data[:bound]
-            self.label = self.label[:bound]
+            if data_type is not None:
+                self.data = self.data[:bound]
+                self.label = self.label[:bound]
+            else:
+                # Compute indices.
+                (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound) = generate_sv_indices()
+
+                # Slice.
+                same_sv_indices = np.asarray(same_sv_indices)[:same_sv_bound]
+                distinct_sv_indices = np.asarray(distinct_sv_indices)[:distinct_sv_bound]
+
+                # And take the point clouds at those indices.
+                self.data = self.data[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
+                self.label = self.label[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
         else:
-            self.data = self.data[len(self.data) - bound:]
-            # In case you want to update this line, make sure you don't write `len(self.data) - bound`.
-            # In that case, `self.data` has been already modified.
-            self.label = self.label[len(self.label) - bound:]
+            if data_type is not None:
+                self.data = self.data[len(self.data) - bound:]
+                # In case you want to update this line, make sure you don't write `len(self.data) - bound`.
+                # In that case, `self.data` has been already modified.
+                self.label = self.label[len(self.label) - bound:]
+            else:
+                # Compute indices.
+                (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound) = generate_sv_indices()
+
+                # Slice.
+                same_sv_indices = np.asarray(same_sv_indices)[len(same_sv_indices) - same_sv_bound:]
+                distinct_sv_indices = np.asarray(distinct_sv_indices)[len(distinct_sv_indices) - distinct_sv_bound:]
+
+                # And take the point clouds at those indices.
+                self.data = self.data[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
+                self.label = self.label[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
+
+        new_same_sv_count = 0
+        for index in range(len(self.data)):
+            if check('s2', self.data[index], num_points):
+                new_same_sv_count += 1
+        print(f'~~~~~~~~ New statistics: SAME = {new_same_sv_count / len(self.data)}, DISTINCT = {1 - new_same_sv_count / len(self.data)} ~~~~~~~~')
 
         print(f'**************** DATA usage={usage["type"]} = {len(self.data)} *****************')
 
         self.num_points = num_points
+        self.usage = usage
         self.partition = partition
         self.gaussian_noise = gaussian_noise
         self.permute = permute
@@ -125,12 +181,13 @@ class ModelNet40(Dataset):
                 self.data = self.data[self.label<20]
                 self.label = self.label[self.label<20]
 
+
     def __getitem__(self, item):
         pointcloud = self.data[item][:self.num_points]
-        # if self.gaussian_noise:
-        #     pointcloud = jitter_pointcloud(pointcloud)
+        
         if self.partition != 'train':
             np.random.seed(item)
+        
         anglex = np.random.uniform() * np.pi / self.factor
         angley = np.random.uniform() * np.pi / self.factor
         anglez = np.random.uniform() * np.pi / self.factor
@@ -163,15 +220,15 @@ class ModelNet40(Dataset):
         euler_ab = np.asarray([anglez, angley, anglex])
         euler_ba = -euler_ab[::-1]
 
-        # print(f'permute={self.permute}, gaussian_noise={self.gaussian_noise}')
-
         if len(self) > 100:
             assert self.permute and self.gaussian_noise
 
+        # TODO: maybe vary the number of inversions in the permutation.
         if self.permute:
             pointcloud1 = np.random.permutation(pointcloud1.T).T
             pointcloud2 = np.random.permutation(pointcloud2.T).T
 
+        # TODO: maybe vary the noise.
         if self.gaussian_noise:
             pointcloud1 = jitter_pointcloud(pointcloud1)
             pointcloud2 = jitter_pointcloud(pointcloud2)
@@ -182,7 +239,6 @@ class ModelNet40(Dataset):
 
     def __len__(self):
         return self.data.shape[0]
-
 
 if __name__ == '__main__':
     train = ModelNet40(1024)
