@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
 from data import ModelNet40
-from model import DCP, Sprinter
+from model import DCP, DCP_DiffICP, Sprinter
 from util import transform_point_cloud, npmat2euler
 import numpy as np
 from torch.utils.data import DataLoader
@@ -464,8 +464,8 @@ def main():
     parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
                         help='Name of the experiment')
     parser.add_argument('--model', type=str, default='dcp', metavar='N',
-                        choices=['dcp', 'sprinter'],
-                        help='Model to use, [dcp]')
+                        choices=['dcp', 'sprinter', 'dcp_difficp'],
+                        help='Model to use')
     parser.add_argument('--emb_nn', type=str, default='pointnet', metavar='N',
                         choices=['pointnet', 'dgcnn'],
                         help='Embedding nn to use, [pointnet, dgcnn]')
@@ -561,6 +561,8 @@ def main():
         net = DCP(args).cuda()
     elif args.model == 'sprinter':
         net = Sprinter(args).cuda()
+    elif args.model == 'dcp_difficp':
+        net = DCP_DiffICP(args).cuda()
     if args.eval:
         if args.model_path == '':
             model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'

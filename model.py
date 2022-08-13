@@ -485,6 +485,87 @@ class MyBatchNorm1d(nn.Module):
             return self.fn(x) 
         return x
 
+class DCP_DiffICP(nn.Module):
+    def __init__(self, args):
+        super(DCP_DiffICP, self).__init__()
+        self.emb_dims = args.emb_dims
+        self.cycle = args.cycle
+        if args.emb_nn == 'pointnet':
+            self.emb_nn = PointNet(emb_dims=self.emb_dims)
+        elif args.emb_nn == 'dgcnn':
+            self.emb_nn = DGCNN(emb_dims=self.emb_dims)
+        else:
+            raise Exception('Not implemented')
+
+        if args.pointer == 'identity':
+            self.pointer = Identity()
+        elif args.pointer == 'transformer':
+            self.pointer = Transformer(args=args)
+        else:
+            raise Exception("Not implemented")
+
+        if args.head == 'mlp':
+            self.head = MLPHead(args=args)
+        elif args.head == 'svd':
+            self.head = SVDHead(args=args)
+        else:
+            raise Exception('Not implemented')
+
+        # self.eval = args.eval
+
+        # TODO: but don't we need the `InitPoseICP`???
+        icp_kwargs = {"verbose": False}
+        self.difficp = ICP6DoF(differentiable=True, iters_max=1, **icp_kwargs)
+        self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
+        self.failures = 0
+
+    def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
+        batch_size = src.size()[0]
+        rotations, translations = [], []
+        icp = self.icp if full_icp else self.difficp
+        for i in range(batch_size):
+            icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
+            icp_init_pose[:3, :3] = rotation[i]
+            icp_init_pose[:3, 3] = translation[i]
+            try:
+                pred_pose = icp(
+                    src[i].transpose(0, 1),
+                    tgt[i].transpose(0, 1),
+                    icp_init_pose,
+                )[0]
+                rotations.append(pred_pose[:3, :3])
+                translations.append(pred_pose[:3, 3])
+            except Exception as e:
+                print(e)
+                rotations.append(rotation[i])
+                translations.append(translation[i])
+                self.failures += 1
+                print(self.failures)
+        return torch.stack(rotations, 0), torch.stack(translations, 0)
+
+    def forward(self, *input):
+        src = input[0]
+        tgt = input[1]
+
+        src_embedding = self.emb_nn(src)
+        tgt_embedding = self.emb_nn(tgt)
+
+        src_embedding_p, tgt_embedding_p = self.pointer(src_embedding, tgt_embedding)
+
+        src_embedding = src_embedding + src_embedding_p
+        tgt_embedding = tgt_embedding + tgt_embedding_p
+
+        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
+
+        rotation_ab, translation_ab = self._refine_with_icp(
+            src, tgt, rotation_ab, translation_ab
+        )
+
+        rotation_ba = rotation_ab.transpose(2, 1).contiguous()
+        translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
+
+        return rotation_ab, translation_ab, rotation_ba, translation_ba
+
 class Sprinter(nn.Module):
     def __init__(self, args):
         super(Sprinter, self).__init__()
