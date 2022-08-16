@@ -466,14 +466,14 @@ class DCP(nn.Module):
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
+        rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
         if self.cycle:
             rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
 
         else:
             rotation_ba = rotation_ab.transpose(2, 1).contiguous()
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
-        return rotation_ab, translation_ab, rotation_ba, translation_ba
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
 
 class MyBatchNorm1d(nn.Module):
     def __init__(self, dim):
@@ -555,7 +555,7 @@ class DCP_DiffICP(nn.Module):
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
+        rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
 
         rotation_ab, translation_ab = self._refine_with_icp(
             src, tgt, rotation_ab, translation_ab
@@ -564,7 +564,7 @@ class DCP_DiffICP(nn.Module):
         rotation_ba = rotation_ab.transpose(2, 1).contiguous()
         translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
 
-        return rotation_ab, translation_ab, rotation_ba, translation_ba
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
 
 class Sprinter(nn.Module):
     def __init__(self, args):
@@ -616,16 +616,18 @@ class Sprinter(nn.Module):
         rotations, translations = [], []
         icp = self.icp if full_icp else self.difficp
         # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
+        mse = []
         for i in range(batch_size):
             icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
             icp_init_pose[:3, :3] = rotation[i]
             icp_init_pose[:3, 3] = translation[i]
             try:
-                pred_pose = icp(
+                pred_pose, _, mse_i = icp(
                     src[i].transpose(0, 1),
                     tgt[i].transpose(0, 1),
                     icp_init_pose,
-                )[0]
+                )
+                mse.append(mse_i)
                 rotations.append(pred_pose[:3, :3])
                 translations.append(pred_pose[:3, 3])
             except Exception as e:
@@ -634,7 +636,7 @@ class Sprinter(nn.Module):
                 translations.append(translation[i])
                 self.failures += 1
                 print(self.failures)
-        return torch.stack(rotations, 0), torch.stack(translations, 0)
+        return torch.stack(rotations, 0), torch.stack(translations, 0), mse
 
     def forward(self, *input):
         src = input[0]
@@ -704,6 +706,19 @@ class Sprinter(nn.Module):
                 eps = torch.randn_like(std)
                 # print(f'eps={eps.shape}')
                 z += eps * std
+            else:
+                best_loss, best_z = [None for _ in range(z.shape[0])], torch.zeros_like(z)
+                for _ in range(5):
+                    eps = torch.randn_like(std)
+                    z_i = z + eps * std
+                    rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z_i), "zyx")
+                    _, _, loss_i = self._refine_with_icp(
+                        src, tgt, rotation_ab, translation_ab, full_icp=True
+                    )
+                    for i in range(z.shape[0]):
+                        if best_loss[i] is None or best_loss[i] > loss_i[i]:
+                            best_z[i], best_loss[i] = z_i[i], loss_i[i]
+                z = best_z
 
             # Enforce positive angles <-- what if we're at pi / 2 <-- 
             z = torch.abs(z)
@@ -713,7 +728,8 @@ class Sprinter(nn.Module):
             # z = dist.rsample()
             # print(f'z.shape={z.shape}')
             rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
-            kl = -torch.mean(0.5 * torch.sum(log_var.exp() - 1 - log_var, dim = 1), dim = 0)
+            const_sigma = 5
+            kl = -torch.mean(0.5 * torch.sum(log_var.exp() / const_sigma + np.log(const_sigma) - 1 - log_var, dim = 1), dim = 0)
         else:
             log_cholesky = self.nn(combined_embedding)
             idx = torch.tensor([[0, 1, 2, 1, 2, 2],
@@ -776,8 +792,8 @@ class Sprinter(nn.Module):
     
         # TODO: this could fail.
         assert not translation_ab.requires_grad
-        rotation_ab, translation_ab = self._refine_with_icp(
-            src, tgt, rotation_ab, translation_ab
+        rotation_ab, translation_ab, _ = self._refine_with_icp(
+            src, tgt, rotation_ab, translation_ab, full_icp=True
         )
 
         # TODO: should we reocompute translation?
