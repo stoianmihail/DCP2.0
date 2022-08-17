@@ -108,8 +108,10 @@ def test_one_epoch(args, net, test_loader):
         # TODO: the MLGS formula has -!!!!!!!!!!!
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
+        # loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+        #     - kl_loss
         loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-            - kl_loss
+               + F.mse_loss(translation_ab_pred, translation_ab)
         
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
@@ -120,7 +122,7 @@ def test_one_epoch(args, net, test_loader):
             loss = loss + cycle_loss * 0.1
 
         total_loss += loss.item() * batch_size
-        total_kl_loss += kl_loss.item() * batch_size
+        total_kl_loss += 0 #kl_loss.item() * batch_size
 
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
@@ -208,7 +210,7 @@ def train_one_epoch(args, net, train_loader, opt):
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
         
         loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-             - kl_loss
+               + F.mse_loss(translation_ab_pred, translation_ab)
              
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
@@ -221,7 +223,7 @@ def train_one_epoch(args, net, train_loader, opt):
         loss.backward()
         opt.step()
         total_loss += loss.item() * batch_size
-        total_kl_loss += kl_loss.item() * batch_size
+        total_kl_loss += 0 #kl_loss.item() * batch_size
 
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
@@ -535,7 +537,7 @@ def main():
     if args.dataset == 'modelnet40':
         # Load training set (only 80%).
         train_loader = DataLoader(
-            ModelNet40(usage={'type' : 'train', 'percentage' : 80}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
+            ModelNet40(usage={'type' : 'train', 'percentage' : 100}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
                         permute=args.permute,
                        unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type, max_epochs=args.epochs),
             batch_size=args.batch_size, shuffle=True, drop_last=True)
@@ -587,7 +589,7 @@ def main():
     if args.eval:
         test(args, net, test_loader, textio)
     else:
-        train(args, net, train_loader, val_loader, boardio, textio)
+        train(args, net, train_loader, test_loader, boardio, textio)
 
     print('FINISH')
     boardio.close()

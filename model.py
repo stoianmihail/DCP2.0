@@ -754,6 +754,19 @@ class Sprinter(nn.Module):
                 eps = torch.randn_like(mu)
                 assert A.shape[0] == eps.shape[0]
                 z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+            # else:
+            #     best_loss, best_z = [None for _ in range(z.shape[0])], torch.zeros_like(z)
+            #     for _ in range(5):
+            #         eps = torch.randn_like(mu)
+            #         z_i = z + torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+            #         rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z_i), "zyx")
+            #         _, _, loss_i = self._refine_with_icp(
+            #             src, tgt, rotation_ab, translation_ab, full_icp=True
+            #         )
+            #         for i in range(z.shape[0]):
+            #             if best_loss[i] is None or best_loss[i] > loss_i[i]:
+            #                 best_z[i], best_loss[i] = z_i[i], loss_i[i]
+            #     z = best_z
             
             assert z.shape == mu.shape
             z = torch.abs(z)
@@ -792,9 +805,9 @@ class Sprinter(nn.Module):
     
         # TODO: this could fail.
         assert not translation_ab.requires_grad
-        rotation_ab, translation_ab, _ = self._refine_with_icp(
-            src, tgt, rotation_ab, translation_ab, full_icp=True
-        )
+        # rotation_ab, translation_ab, _ = self._refine_with_icp(
+        #     src, tgt, rotation_ab, translation_ab, full_icp=True
+        # )
 
         # TODO: should we reocompute translation?
         # TODO: yes, since the compute translation would be actually zero!!!
