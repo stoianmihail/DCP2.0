@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from util import quat2mat
 from difficp import ICP6DoF
+from hypericp import torch_solve_batch
 
 from difficp.utils.geometry_utils import euler_angles_to_rotation_matrix, rotation_matrix_to_euler_angles
 
@@ -455,6 +456,40 @@ class DCP(nn.Module):
         else:
             raise Exception('Not implemented')
 
+        icp_kwargs = {"verbose": False}
+        self.difficp = ICP6DoF(differentiable=True, iters_max=1, **icp_kwargs)
+        self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
+        self.failures = 0
+
+    def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
+        batch_size = src.size()[0]
+        rotations, translations = [], []
+        icp = self.icp if full_icp else self.difficp
+        num_iters = []
+
+        # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
+        for i in range(batch_size):
+            icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
+            icp_init_pose[:3, :3] = rotation[i]
+            icp_init_pose[:3, 3] = translation[i]
+            try:
+                pred_pose, num_iter, mse = icp(
+                    src[i].transpose(0, 1),
+                    tgt[i].transpose(0, 1),
+                    icp_init_pose,
+                )
+                num_iters.append(num_iter)
+                rotations.append(pred_pose[:3, :3])
+                translations.append(pred_pose[:3, 3])
+            except Exception as e:
+                print(e)
+                rotations.append(rotation[i])
+                translations.append(translation[i])
+                self.failures += 1
+                print(self.failures)
+        print(f'num_iters={num_iters}')
+        return torch.stack(rotations, 0), torch.stack(translations, 0), torch.Tensor(num_iters)
+
     def forward(self, *input):
         src = input[0]
         tgt = input[1]
@@ -466,14 +501,21 @@ class DCP(nn.Module):
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
+        rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
+
+        if not self.training:
+            rotation_ab, translation_ab, num_iters  = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab, full_icp=True
+            )
+
+            print(f'torch.mean(num_iters)={torch.mean(num_iters)}')
+
         if self.cycle:
             rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
-
         else:
             rotation_ba = rotation_ab.transpose(2, 1).contiguous()
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
-        return rotation_ab, translation_ab, rotation_ba, translation_ba
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
 
 class MyBatchNorm1d(nn.Module):
     def __init__(self, dim):
@@ -523,16 +565,20 @@ class DCP_DiffICP(nn.Module):
         batch_size = src.size()[0]
         rotations, translations = [], []
         icp = self.icp if full_icp else self.difficp
+        num_iters = []
+
+        # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
         for i in range(batch_size):
             icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
             icp_init_pose[:3, :3] = rotation[i]
             icp_init_pose[:3, 3] = translation[i]
             try:
-                pred_pose = icp(
+                pred_pose, num_iter, mse = icp(
                     src[i].transpose(0, 1),
                     tgt[i].transpose(0, 1),
                     icp_init_pose,
-                )[0]
+                )
+                num_iters.append(num_iter)
                 rotations.append(pred_pose[:3, :3])
                 translations.append(pred_pose[:3, 3])
             except Exception as e:
@@ -541,7 +587,8 @@ class DCP_DiffICP(nn.Module):
                 translations.append(translation[i])
                 self.failures += 1
                 print(self.failures)
-        return torch.stack(rotations, 0), torch.stack(translations, 0)
+        print(f'num_iters={num_iters}')
+        return torch.stack(rotations, 0), torch.stack(translations, 0), torch.Tensor(num_iters)
 
     def forward(self, *input):
         src = input[0]
@@ -555,16 +602,23 @@ class DCP_DiffICP(nn.Module):
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
+        rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
 
-        rotation_ab, translation_ab = self._refine_with_icp(
-            src, tgt, rotation_ab, translation_ab
-        )
+        if self.training:
+            rotation_ab, translation_ab = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab
+            )
+        else:
+            rotation_ab, translation_ab, num_iters  = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab, full_icp=True
+            )
+
+            print(f'torch.mean(num_iters)={torch.mean(num_iters)}')
 
         rotation_ba = rotation_ab.transpose(2, 1).contiguous()
         translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
 
-        return rotation_ab, translation_ab, rotation_ba, translation_ba
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
 
 class Sprinter(nn.Module):
     def __init__(self, args):
@@ -615,17 +669,20 @@ class Sprinter(nn.Module):
         batch_size = src.size()[0]
         rotations, translations = [], []
         icp = self.icp if full_icp else self.difficp
+        # mse = []
+
         # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
         for i in range(batch_size):
             icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
             icp_init_pose[:3, :3] = rotation[i]
             icp_init_pose[:3, 3] = translation[i]
             try:
-                pred_pose = icp(
+                pred_pose, _, _ = icp(
                     src[i].transpose(0, 1),
                     tgt[i].transpose(0, 1),
                     icp_init_pose,
-                )[0]
+                )
+                # mse.append(mse_i)
                 rotations.append(pred_pose[:3, :3])
                 translations.append(pred_pose[:3, 3])
             except Exception as e:
@@ -634,7 +691,8 @@ class Sprinter(nn.Module):
                 translations.append(translation[i])
                 self.failures += 1
                 print(self.failures)
-        return torch.stack(rotations, 0), torch.stack(translations, 0)
+        # print(f'num_iters={num_iters}')
+        return torch.stack(rotations, 0), torch.stack(translations, 0)#, mse
 
     def forward(self, *input):
         src = input[0]
@@ -658,127 +716,152 @@ class Sprinter(nn.Module):
         assert torch.allclose(src.mean(dim=2, keepdim=True), torch.zeros_like(src_mean, device=src_mean.device), atol=1e-6)
         assert torch.allclose(tgt.mean(dim=2, keepdim=True), torch.zeros_like(tgt_mean, device=tgt_mean.device), atol=1e-6)
 
-        src_embedding = self.emb_nn(src)
-        tgt_embedding = self.emb_nn(tgt)
+        if True:
+            src_embedding = self.emb_nn(src)
+            tgt_embedding = self.emb_nn(tgt)
 
-        src_embedding_p, tgt_embedding_p = self.pointer(src_embedding, tgt_embedding)
+            src_embedding_p, tgt_embedding_p = self.pointer(src_embedding, tgt_embedding)
 
-        src_embedding = src_embedding + src_embedding_p
-        tgt_embedding = tgt_embedding + tgt_embedding_p
+            src_embedding = src_embedding + src_embedding_p
+            tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        _, tmp, mu = self.head(src_embedding, tgt_embedding, src, tgt)
+            _, tmp, mu = self.head(src_embedding, tgt_embedding, src, tgt)
 
-        # print(f'mu={mu}')
+            # print(f'mu={mu}')
 
-        translation_ab = torch.zeros_like(tmp)
-        # if self.cycle:
-        #     rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
-        # else:
+            translation_ab = torch.zeros_like(tmp)
+            # if self.cycle:
+            #     rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
+            # else:
 
-        combined_embedding = torch.cat([src_embedding, tgt_embedding], 1)
-        combined_embedding = F.adaptive_max_pool1d(combined_embedding, 1).squeeze(-1)
+            combined_embedding = torch.cat([src_embedding, tgt_embedding], 1)
+            combined_embedding = F.adaptive_max_pool1d(combined_embedding, 1).squeeze(-1)
 
-        # print(f'combined_embedding={combined_embedding}, shape={combined_embedding.shape}')
+            # print(f'combined_embedding={combined_embedding}, shape={combined_embedding.shape}')
 
-        # TODO: implement rotation matrix trick, that we transform the delta angles into rotation matrix.
-        # TODO: then we don't need to apply `rotation_matrix_to_euler_angles` anymore in `self.head` <- more precise + more efficient.
-        # TODO: but we lose the gaussian structure!
+            # TODO: implement rotation matrix trick, that we transform the delta angles into rotation matrix.
+            # TODO: then we don't need to apply `rotation_matrix_to_euler_angles` anymore in `self.head` <- more precise + more efficient.
+            # TODO: but we lose the gaussian structure!
 
-        kl = None
-        if self.formula == 'diag':
-            log_var = self.nn(combined_embedding)
-            std = torch.exp(0.5 * log_var)
+            kl = None
+            if self.formula == 'diag':
+                log_var = self.nn(combined_embedding)
+                std = torch.exp(0.5 * log_var)
 
-            # log_var = torch.zeros_like(log_var)
-            # assert not log_var.requires_grad
+                # log_var = torch.zeros_like(log_var)
+                # assert not log_var.requires_grad
 
-            # print(f'std={std}')
+                # print(f'std={std}')
 
-            # print(f'sigma.shape={std}')
-            # print(f'diag={torch.diag(sigma)}')
+                # print(f'sigma.shape={std}')
+                # print(f'diag={torch.diag(sigma)}')
+                
+                # std = torch.exp(0.5 * logvar)
+                z = torch.rad2deg(mu)
+                if self.training:
+                # TODO: wait, is this the same for all?
+                    eps = torch.randn_like(std)
+                    # print(f'eps={eps.shape}')
+                    z += eps * std
+
+                # Enforce positive angles <-- what if we're at pi / 2 <-- 
+                z = torch.abs(z)
+                # print(f'z={z}')
+                
+                # dist = torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=torch.diag(sigma))
+                # z = dist.rsample()
+                # print(f'z.shape={z.shape}')
+                rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
+                kl = -torch.mean(0.5 * torch.sum(log_var.exp() - 1 - log_var, dim = 1), dim = 0)
+            else:
+                log_cholesky = self.nn(combined_embedding)
+                idx = torch.tensor([[0, 1, 2, 1, 2, 2],
+                                    [0, 1, 2, 0, 0, 1]], dtype=torch.int64)
+                                    # dtype=torch.int64)
+                # TODO: add requires grad.
+                A = torch.zeros((src.shape[0], 3, 3), device=log_cholesky.device)
+                # ret = torch.rand((6,))# if False else torch.tensor([0, 0, 0, -torch.inf, -torch.inf, -torch.inf], dtype=torch.float32)
+                # print(ret.dtype)
+
+                # TODO: do the others entries of `A` need by `np.inf`.
+                A[:, idx[0], idx[1]] = (0.5 * log_cholesky).exp()
+                assert A.requires_grad_
+                # S = A @ A.transpose(1, 2).contiguous()
+
+                # print(f'log_cholesky={log_cholesky}')
+
+                # print(f'A.shape={A.shape}, eps.shape={eps.shape}, eps.uns={eps.unsqueeze(-1).shape}')
+                
+                z = torch.rad2deg(mu)
+                if self.training:
+                    eps = torch.randn_like(mu)
+                    assert A.shape[0] == eps.shape[0]
+                    z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+                
+                assert z.shape == mu.shape
+                z = torch.abs(z)
+
+                rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
+
+                kl = -torch.mean(0.5 * (log_cholesky.exp().sum(dim=1) - log_cholesky[:, :3].sum(dim=1) - 3))
+                # test_kl = -torch.mean(0.5 * torch.sum(log_cholesky.exp() - 1 - log_cholesky, dim = 1), dim = 0)
+                # print(f'kl={kl}, test_kl={test_kl}')
+                # assert torch.isclose(kl, test_kl, atol=1e-6)
+                # test_loss = 0.5 * (S.diagonal(offset=0, dim1=-1, dim2=-2).sum(-1) - torch.log(torch.linalg.det(S)) - 3)
+                # assert torch.allclose(loss, test_loss)
+                # return loss
+
+            # print(f'pre_sigma={pre_sigma.shape}')
+
+            # input = torch.cat([pre_sigma, mu], 1)
+            # print(f'input={input.shape}')
+            # sigma = self.compressor(input)
+            # assert sigma.shape == pre_sigma.shape
+
             
-            # std = torch.exp(0.5 * logvar)
-            z = torch.rad2deg(mu)
-            if self.training:
-            # TODO: wait, is this the same for all?
-                eps = torch.randn_like(std)
-                # print(f'eps={eps.shape}')
-                z += eps * std
+            # Sample.
+            # print(f'mu={mu}')
 
-            # Enforce positive angles <-- what if we're at pi / 2 <-- 
-            z = torch.abs(z)
-            # print(f'z={z}')
-            
-            # dist = torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=torch.diag(sigma))
-            # z = dist.rsample()
-            # print(f'z.shape={z.shape}')
-            rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
-            kl = -torch.mean(0.5 * torch.sum(log_var.exp() - 1 - log_var, dim = 1), dim = 0)
-        else:
-            log_cholesky = self.nn(combined_embedding)
-            idx = torch.tensor([[0, 1, 2, 1, 2, 2],
-                                [0, 1, 2, 0, 0, 1]], dtype=torch.int64)
-                                # dtype=torch.int64)
-            # TODO: add requires grad.
-            A = torch.zeros((src.shape[0], 3, 3), device=log_cholesky.device)
-            # ret = torch.rand((6,))# if False else torch.tensor([0, 0, 0, -torch.inf, -torch.inf, -torch.inf], dtype=torch.float32)
-            # print(ret.dtype)
+                    # self.candidates = self.mus + self.sigmas * torch.randn(self.planning_horizon, self.batch_size, self.n_candidates, self.action_size).to(self.device)  # (H, B, C, 6)
 
-            # TODO: do the others entries of `A` need by `np.inf`.
-            A[:, idx[0], idx[1]] = (0.5 * log_cholesky).exp()
-            assert A.requires_grad_
-            # S = A @ A.transpose(1, 2).contiguous()
+            # sigma = torch.exp(self.nn(com))
 
-            # print(f'log_cholesky={log_cholesky}')
+            # curr_num_cands = self.num_cands if self.training else 1
+            # z, curr_sigmas, ratio = self.reparameterize(batch_size, curr_num_cands, mu, sigma)
 
-            # print(f'A.shape={A.shape}, eps.shape={eps.shape}, eps.uns={eps.unsqueeze(-1).shape}')
-            
-            z = torch.rad2deg(mu)
-            if self.training:
-                eps = torch.randn_like(mu)
-                assert A.shape[0] == eps.shape[0]
-                z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
-            
-            assert z.shape == mu.shape
-            z = torch.abs(z)
-
-            rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
-
-            kl = -torch.mean(0.5 * (log_cholesky.exp().sum(dim=1) - log_cholesky[:, :3].sum(dim=1) - 3))
-            # test_kl = -torch.mean(0.5 * torch.sum(log_cholesky.exp() - 1 - log_cholesky, dim = 1), dim = 0)
-            # print(f'kl={kl}, test_kl={test_kl}')
-            # assert torch.isclose(kl, test_kl, atol=1e-6)
-            # test_loss = 0.5 * (S.diagonal(offset=0, dim1=-1, dim2=-2).sum(-1) - torch.log(torch.linalg.det(S)) - 3)
-            # assert torch.allclose(loss, test_loss)
-            # return loss
-
-        # print(f'pre_sigma={pre_sigma.shape}')
-
-        # input = torch.cat([pre_sigma, mu], 1)
-        # print(f'input={input.shape}')
-        # sigma = self.compressor(input)
-        # assert sigma.shape == pre_sigma.shape
+            # TODO: compute translation based on rotation.
+            # TODO: subtract means at the beginning.
 
         
-        # Sample.
-        # print(f'mu={mu}')
+            # TODO: this could fail.
+            if self.training:
+                assert not translation_ab.requires_grad
+                rotation_ab, translation_ab = self._refine_with_icp(
+                    src, tgt, rotation_ab, translation_ab
+                )
+            # else:
+                # best_loss, best_z = [None for _ in range(z.shape[0])], torch.zeros_like(z)
+                # for _ in range(5):
+                #     eps = torch.randn_like(std)
+                #     z_i = z + eps * std
+                #     rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z_i), "zyx")
+                #     _, _, loss_i = self._refine_with_icp(
+                #         src, tgt, rotation_ab, translation_ab, full_icp=True
+                #     )
+                #     for i in range(z.shape[0]):
+                #         if best_loss[i] is None or best_loss[i] > loss_i[i]:
+                #             best_z[i], best_loss[i] = z_i[i], loss_i[i]
+                # z = best_z
+            # else:
+            #     rotation_ab, translation_ab  = self._refine_with_icp(
+            #         src, tgt, rotation_ab, translation_ab, full_icp=True
+            #     )
 
-                # self.candidates = self.mus + self.sigmas * torch.randn(self.planning_horizon, self.batch_size, self.n_candidates, self.action_size).to(self.device)  # (H, B, C, 6)
+            # print(f'torch.mean(num_iters)={torch.mean(num_iters)}')
+        else:
+            kl = 0
+            rotation_ab, translation_ab = torch_solve_batch(src, tgt, verbose=False)
 
-        # sigma = torch.exp(self.nn(com))
-
-        # curr_num_cands = self.num_cands if self.training else 1
-        # z, curr_sigmas, ratio = self.reparameterize(batch_size, curr_num_cands, mu, sigma)
-
-        # TODO: compute translation based on rotation.
-        # TODO: subtract means at the beginning.
-
-    
-        # TODO: this could fail.
-        assert not translation_ab.requires_grad
-        rotation_ab, translation_ab = self._refine_with_icp(
-            src, tgt, rotation_ab, translation_ab
-        )
 
         # TODO: should we reocompute translation?
         # TODO: yes, since the compute translation would be actually zero!!!

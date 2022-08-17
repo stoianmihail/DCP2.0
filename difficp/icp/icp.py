@@ -210,6 +210,9 @@ class ICP(ABC):
         sources, targets, source_normals, target_normals, pose, mse = self.initialize(
             sources, targets, source_normals, target_normals, init_pose
         )
+
+        # i = 0
+        # while True:
         for i in range(self.iters_max):
             src = self.transform_fn(sources, pose)
             src, tgt, src_normals, tgt_normals, _, _, weights = self.corr_fn(
@@ -241,6 +244,7 @@ class ICP(ABC):
                 target_normals=tgt_normals,
                 weights=weights,
             )
+            # i += 1
         if self.verbose:
             print(self.iters_max, self.last_mse, pose)
         return pose, self.iters_max, mse

@@ -108,6 +108,7 @@ def test_one_epoch(args, net, test_loader):
         # TODO: the MLGS formula has -!!!!!!!!!!!
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
+        # TODO: adapt this for DCP.
         loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
             - kl_loss
         
@@ -120,7 +121,10 @@ def test_one_epoch(args, net, test_loader):
             loss = loss + cycle_loss * 0.1
 
         total_loss += loss.item() * batch_size
-        total_kl_loss += kl_loss.item() * batch_size
+        try:
+            total_kl_loss += kl_loss.item() * batch_size
+        except:
+            pass
 
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
@@ -221,7 +225,10 @@ def train_one_epoch(args, net, train_loader, opt):
         loss.backward()
         opt.step()
         total_loss += loss.item() * batch_size
-        total_kl_loss += kl_loss.item() * batch_size
+        try:
+            total_kl_loss += kl_loss.item() * batch_size
+        except:
+            pass
 
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
@@ -532,27 +539,31 @@ def main():
     textio = IOStream('checkpoints/' + args.exp_name + '/run.log')
     textio.cprint(str(args))
 
+    train_loader, val_loader, test_loader = None, None, None
     if args.dataset == 'modelnet40':
         # Load training set (only 80%).
-        train_loader = DataLoader(
-            ModelNet40(usage={'type' : 'train', 'percentage' : 80}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
-                        permute=args.permute,
-                       unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type, max_epochs=args.epochs),
-            batch_size=args.batch_size, shuffle=True, drop_last=True)
+        if not args.eval:
+            train_loader = DataLoader(
+                ModelNet40(usage={'type' : 'train', 'percentage' : 80}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
+                            permute=args.permute,
+                        unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type, max_epochs=args.epochs),
+                batch_size=args.batch_size, shuffle=True, drop_last=True)
 
         # Load validation set, i.e., 20% from training set.
-        val_loader = DataLoader(
-            ModelNet40(usage={'type' : 'val', 'percentage' : 20}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
-                        permute=args.permute,
-                       unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type, max_epochs=args.epochs),
-            batch_size=args.test_batch_size, shuffle=False, drop_last=False)
+        if not args.eval:
+            val_loader = DataLoader(
+                ModelNet40(usage={'type' : 'val', 'percentage' : 20}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
+                            permute=args.permute,
+                        unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type, max_epochs=args.epochs),
+                batch_size=args.test_batch_size, shuffle=False, drop_last=False)
         
         # Load full test set.
-        test_loader = DataLoader(
-            ModelNet40(usage={'type' : 'test', 'percentage' : 100}, num_points=args.num_points, partition='test', gaussian_noise=args.gaussian_noise,
-                        permute=args.permute,
-                       unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
-            batch_size=args.test_batch_size, shuffle=False, drop_last=False)
+        if args.eval:
+            test_loader = DataLoader(
+                ModelNet40(usage={'type' : 'test', 'percentage' : 100}, num_points=args.num_points, partition='test', gaussian_noise=args.gaussian_noise,
+                            permute=args.permute,
+                        unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
+                batch_size=args.test_batch_size, shuffle=False, drop_last=False)
     else:
         raise Exception("not implemented")
 
