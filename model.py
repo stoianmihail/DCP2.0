@@ -15,6 +15,10 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from util import quat2mat
 
+from difficp import ICP6DoF
+from difficp.utils.geometry_utils import euler_angles_to_rotation_matrix, rotation_matrix_to_euler_angles
+
+torch.cuda.empty_cache()
 
 # Part of the code is referred from: http://nlp.seas.harvard.edu/2018/04/03/attention.html#positional-encoding
 
@@ -400,7 +404,7 @@ class SVDHead(nn.Module):
 
         U, S, V = [], [], []
         R = []
-
+        mus = []
         for i in range(src.size(0)):
             u, s, v = torch.svd(H[i])
             r = torch.matmul(v, u.transpose(1, 0).contiguous())
@@ -411,6 +415,7 @@ class SVDHead(nn.Module):
                 r = torch.matmul(v, u.transpose(1, 0).contiguous())
                 # r = r * self.reflect
             R.append(r)
+            mus.append(rotation_matrix_to_euler_angles(r, "zyx"))
 
             U.append(u)
             S.append(s)
@@ -422,7 +427,7 @@ class SVDHead(nn.Module):
         R = torch.stack(R, dim=0)
 
         t = torch.matmul(-R, src.mean(dim=2, keepdim=True)) + src_corr.mean(dim=2, keepdim=True)
-        return R, t.view(batch_size, 3)
+        return R, t.view(batch_size, 3), torch.stack(mus, dim=0)
 
 
 class DCP(nn.Module):
@@ -462,14 +467,14 @@ class DCP(nn.Module):
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
+        rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
         if self.cycle:
             rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
 
         else:
             rotation_ba = rotation_ab.transpose(2, 1).contiguous()
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
-        return rotation_ab, translation_ab, rotation_ba, translation_ba
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
 
 class MyBatchNorm1d(nn.Module):
     def __init__(self, dim):

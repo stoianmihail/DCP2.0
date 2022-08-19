@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
 from data import ModelNet40
-from model import DCP
+from model import DCP, DCP_plus_plus
 from util import transform_point_cloud, npmat2euler
 import numpy as np
 from torch.utils.data import DataLoader
@@ -55,6 +55,7 @@ def test_one_epoch(args, net, test_loader):
     mae_ba = 0
 
     total_loss = 0
+    total_kl_loss = 0
     total_cycle_loss = 0
     num_examples = 0
     rotations_ab = []
@@ -80,7 +81,7 @@ def test_one_epoch(args, net, test_loader):
 
         batch_size = src.size(0)
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_divergence = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -101,8 +102,15 @@ def test_one_epoch(args, net, test_loader):
 
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
-        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-               + F.mse_loss(translation_ab_pred, translation_ab)
+        loss = None
+        if args.model == 'dcp':
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+                + F.mse_loss(translation_ab_pred, translation_ab)
+        elif args.model == 'dcp++':
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+                - kl_divergence
+        assert loss is not None
+    
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
             translation_loss = torch.mean((torch.matmul(rotation_ba_pred.transpose(2, 1),
@@ -113,6 +121,10 @@ def test_one_epoch(args, net, test_loader):
             loss = loss + cycle_loss * 0.1
 
         total_loss += loss.item() * batch_size
+        try:
+            total_kl_loss += kl_divergence.item() * batch_size
+        except:
+            pass
 
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
@@ -136,7 +148,7 @@ def test_one_epoch(args, net, test_loader):
     eulers_ab = np.concatenate(eulers_ab, axis=0)
     eulers_ba = np.concatenate(eulers_ba, axis=0)
 
-    return total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
+    return total_kl_loss * 1.0 / num_examples, total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
            mse_ab * 1.0 / num_examples, mae_ab * 1.0 / num_examples, \
            mse_ba * 1.0 / num_examples, mae_ba * 1.0 / num_examples, rotations_ab, \
            translations_ab, rotations_ab_pred, translations_ab_pred, rotations_ba, \
@@ -152,6 +164,7 @@ def train_one_epoch(args, net, train_loader, opt):
     mae_ba = 0
 
     total_loss = 0
+    total_kl_loss = 0
     total_cycle_loss = 0
     num_examples = 0
     rotations_ab = []
@@ -178,7 +191,7 @@ def train_one_epoch(args, net, train_loader, opt):
         batch_size = src.size(0)
         opt.zero_grad()
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_divergence = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -198,8 +211,16 @@ def train_one_epoch(args, net, train_loader, opt):
         transformed_target = transform_point_cloud(target, rotation_ba_pred, translation_ba_pred)
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
-        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-               + F.mse_loss(translation_ab_pred, translation_ab)
+                
+        loss = None
+        if args.model == 'dcp':
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+                + F.mse_loss(translation_ab_pred, translation_ab)
+        elif args.model == 'dcp++':
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+                - kl_divergence
+        assert loss is not None
+
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
             translation_loss = torch.mean((torch.matmul(rotation_ba_pred.transpose(2, 1),
@@ -212,6 +233,10 @@ def train_one_epoch(args, net, train_loader, opt):
         loss.backward()
         opt.step()
         total_loss += loss.item() * batch_size
+        try:
+            total_kl_loss += kl_divergence.item() * batch_size
+        except:
+            pass
 
         if args.cycle:
             total_cycle_loss = total_cycle_loss + cycle_loss.item() * 0.1 * batch_size
@@ -235,7 +260,7 @@ def train_one_epoch(args, net, train_loader, opt):
     eulers_ab = np.concatenate(eulers_ab, axis=0)
     eulers_ba = np.concatenate(eulers_ba, axis=0)
 
-    return total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
+    return total_kl_loss * 1.0 / num_examples, total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
            mse_ab * 1.0 / num_examples, mae_ab * 1.0 / num_examples, \
            mse_ba * 1.0 / num_examples, mae_ba * 1.0 / num_examples, rotations_ab, \
            translations_ab, rotations_ab_pred, translations_ab_pred, rotations_ba, \
@@ -244,7 +269,7 @@ def train_one_epoch(args, net, train_loader, opt):
 
 def test(args, net, test_loader, boardio, textio):
 
-    test_loss, test_cycle_loss, \
+    test_kl_loss, test_loss, test_cycle_loss, \
     test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
     test_rotations_ab_pred, \
     test_translations_ab_pred, test_rotations_ba, test_translations_ba, test_rotations_ba_pred, \
@@ -270,15 +295,15 @@ def test(args, net, test_loader, boardio, textio):
 
     textio.cprint('==FINAL TEST==')
     textio.cprint('A--------->B')
-    textio.cprint('EPOCH:: %d, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+    textio.cprint('EPOCH:: %d, KL: %f, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                   'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                  % (-1, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab,
+                  % (-1, test_kl_loss, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab,
                      test_r_mse_ab, test_r_rmse_ab,
                      test_r_mae_ab, test_t_mse_ab, test_t_rmse_ab, test_t_mae_ab))
     textio.cprint('B--------->A')
-    textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+    textio.cprint('EPOCH:: %d, KL: %f, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                   'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                  % (-1, test_loss, test_mse_ba, test_rmse_ba, test_mae_ba, test_r_mse_ba, test_r_rmse_ba,
+                  % (-1, test_kl_loss, test_loss, test_mse_ba, test_rmse_ba, test_mae_ba, test_r_mse_ba, test_r_rmse_ba,
                      test_r_mae_ba, test_t_mse_ba, test_t_rmse_ba, test_t_mae_ba))
 
 
@@ -293,6 +318,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
 
 
     best_test_loss = np.inf
+    best_test_kl_loss = np.inf
     best_test_cycle_loss = np.inf
     best_test_mse_ab = np.inf
     best_test_rmse_ab = np.inf
@@ -318,12 +344,12 @@ def train(args, net, train_loader, test_loader, boardio, textio):
 
     for epoch in range(args.epochs):
         scheduler.step()
-        train_loss, train_cycle_loss, \
+        train_kl_loss, train_loss, train_cycle_loss, \
         train_mse_ab, train_mae_ab, train_mse_ba, train_mae_ba, train_rotations_ab, train_translations_ab, \
         train_rotations_ab_pred, \
         train_translations_ab_pred, train_rotations_ba, train_translations_ba, train_rotations_ba_pred, \
         train_translations_ba_pred, train_eulers_ab, train_eulers_ba = train_one_epoch(args, net, train_loader, opt)
-        test_loss, test_cycle_loss, \
+        test_kl_loss, test_loss, test_cycle_loss, \
         test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
         test_rotations_ab_pred, \
         test_translations_ab_pred, test_rotations_ba, test_translations_ba, test_rotations_ba_pred, \
@@ -368,6 +394,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
 
         if best_test_loss >= test_loss:
             best_test_loss = test_loss
+            best_test_kl_loss = test_kl_loss
             best_test_cycle_loss = test_cycle_loss
 
             best_test_mse_ab = test_mse_ab
@@ -401,39 +428,39 @@ def train(args, net, train_loader, test_loader, boardio, textio):
 
         textio.cprint('==TRAIN==')
         textio.cprint('A--------->B')
-        textio.cprint('EPOCH:: %d, Loss: %f, Cycle Loss:, %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        textio.cprint('EPOCH:: %d, KL: %f, Loss: %f, Cycle Loss:, %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, train_loss, train_cycle_loss, train_mse_ab, train_rmse_ab, train_mae_ab, train_r_mse_ab,
+                      % (epoch, train_kl_loss, train_loss, train_cycle_loss, train_mse_ab, train_rmse_ab, train_mae_ab, train_r_mse_ab,
                          train_r_rmse_ab, train_r_mae_ab, train_t_mse_ab, train_t_rmse_ab, train_t_mae_ab))
         textio.cprint('B--------->A')
-        textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        textio.cprint('EPOCH:: %d, KL: %f, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, train_loss, train_mse_ba, train_rmse_ba, train_mae_ba, train_r_mse_ba, train_r_rmse_ba,
+                      % (epoch, train_kl_loss, train_loss, train_mse_ba, train_rmse_ba, train_mae_ba, train_r_mse_ba, train_r_rmse_ba,
                          train_r_mae_ba, train_t_mse_ba, train_t_rmse_ba, train_t_mae_ba))
 
         textio.cprint('==TEST==')
         textio.cprint('A--------->B')
-        textio.cprint('EPOCH:: %d, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        textio.cprint('EPOCH:: %d, KL: %f, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab, test_r_mse_ab,
+                      % (epoch, test_kl_loss, test_loss, test_cycle_loss, test_mse_ab, test_rmse_ab, test_mae_ab, test_r_mse_ab,
                          test_r_rmse_ab, test_r_mae_ab, test_t_mse_ab, test_t_rmse_ab, test_t_mae_ab))
         textio.cprint('B--------->A')
-        textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        textio.cprint('EPOCH:: %d, KL: %f, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, test_loss, test_mse_ba, test_rmse_ba, test_mae_ba, test_r_mse_ba, test_r_rmse_ba,
+                      % (epoch, test_kl_loss, test_loss, test_mse_ba, test_rmse_ba, test_mae_ba, test_r_mse_ba, test_r_rmse_ba,
                          test_r_mae_ba, test_t_mse_ba, test_t_rmse_ba, test_t_mae_ba))
 
         textio.cprint('==BEST TEST==')
         textio.cprint('A--------->B')
-        textio.cprint('EPOCH:: %d, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        textio.cprint('EPOCH:: %d, KL: %f, Loss: %f, Cycle Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, best_test_loss, best_test_cycle_loss, best_test_mse_ab, best_test_rmse_ab,
+                      % (epoch, best_test_kl_loss, best_test_loss, best_test_cycle_loss, best_test_mse_ab, best_test_rmse_ab,
                          best_test_mae_ab, best_test_r_mse_ab, best_test_r_rmse_ab,
                          best_test_r_mae_ab, best_test_t_mse_ab, best_test_t_rmse_ab, best_test_t_mae_ab))
         textio.cprint('B--------->A')
-        textio.cprint('EPOCH:: %d, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
+        textio.cprint('EPOCH:: %d, KL: %f, Loss: %f, MSE: %f, RMSE: %f, MAE: %f, rot_MSE: %f, rot_RMSE: %f, '
                       'rot_MAE: %f, trans_MSE: %f, trans_RMSE: %f, trans_MAE: %f'
-                      % (epoch, best_test_loss, best_test_mse_ba, best_test_rmse_ba, best_test_mae_ba,
+                      % (epoch, best_test_kl_loss, best_test_loss, best_test_mse_ba, best_test_rmse_ba, best_test_mae_ba,
                          best_test_r_mse_ba, best_test_r_rmse_ba,
                          best_test_r_mae_ba, best_test_t_mse_ba, best_test_t_rmse_ba, best_test_t_mae_ba))
 
@@ -447,6 +474,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('A->B/train/translation/MSE', train_t_mse_ab, epoch)
         boardio.add_scalar('A->B/train/translation/RMSE', train_t_rmse_ab, epoch)
         boardio.add_scalar('A->B/train/translation/MAE', train_t_mae_ab, epoch)
+        boardio.add_scalar('A->B/train/KL', train_kl_loss)
 
         boardio.add_scalar('B->A/train/loss', train_loss, epoch)
         boardio.add_scalar('B->A/train/MSE', train_mse_ba, epoch)
@@ -458,6 +486,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('B->A/train/translation/MSE', train_t_mse_ba, epoch)
         boardio.add_scalar('B->A/train/translation/RMSE', train_t_rmse_ba, epoch)
         boardio.add_scalar('B->A/train/translation/MAE', train_t_mae_ba, epoch)
+        boardio.add_scalar('B->A/train/KL', train_kl_loss)
 
         ############TEST
         boardio.add_scalar('A->B/test/loss', test_loss, epoch)
@@ -470,6 +499,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('A->B/test/translation/MSE', test_t_mse_ab, epoch)
         boardio.add_scalar('A->B/test/translation/RMSE', test_t_rmse_ab, epoch)
         boardio.add_scalar('A->B/test/translation/MAE', test_t_mae_ab, epoch)
+        boardio.add_scalar('A->B/test/KL', test_kl_loss)
 
         boardio.add_scalar('B->A/test/loss', test_loss, epoch)
         boardio.add_scalar('B->A/test/MSE', test_mse_ba, epoch)
@@ -481,6 +511,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('B->A/test/translation/MSE', test_t_mse_ba, epoch)
         boardio.add_scalar('B->A/test/translation/RMSE', test_t_rmse_ba, epoch)
         boardio.add_scalar('B->A/test/translation/MAE', test_t_mae_ba, epoch)
+        boardio.add_scalar('A->B/test/KL', test_kl_loss)
 
         ############BEST TEST
         boardio.add_scalar('A->B/best_test/loss', best_test_loss, epoch)
@@ -493,6 +524,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('A->B/best_test/translation/MSE', best_test_t_mse_ab, epoch)
         boardio.add_scalar('A->B/best_test/translation/RMSE', best_test_t_rmse_ab, epoch)
         boardio.add_scalar('A->B/best_test/translation/MAE', best_test_t_mae_ab, epoch)
+        boardio.add_scalar('A->B/best_test/KL', best_test_kl_loss)
 
         boardio.add_scalar('B->A/best_test/loss', best_test_loss, epoch)
         boardio.add_scalar('B->A/best_test/MSE', best_test_mse_ba, epoch)
@@ -504,6 +536,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('B->A/best_test/translation/MSE', best_test_t_mse_ba, epoch)
         boardio.add_scalar('B->A/best_test/translation/RMSE', best_test_t_rmse_ba, epoch)
         boardio.add_scalar('B->A/best_test/translation/MAE', best_test_t_mae_ba, epoch)
+        boardio.add_scalar('A->B/best_test/KL', best_test_kl_loss)
 
         if torch.cuda.device_count() > 1:
             torch.save(net.module.state_dict(), 'checkpoints/%s/models/model.%d.t7' % (args.exp_name, epoch))
@@ -516,10 +549,13 @@ def main():
     parser = argparse.ArgumentParser(description='Point Cloud Registration')
     parser.add_argument('--data_size', type=int, default=None, metavar='N',
                         help='Data size')
+    parser.add_argument('--formula', type=str, default='cov', metavar='N',
+                        choices = ['diag', 'cov'],
+                        help='Formula')    
     parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
                         help='Name of the experiment')
     parser.add_argument('--model', type=str, default='dcp', metavar='N',
-                        choices=['dcp'],
+                        choices=['dcp', 'dcp++'],
                         help='Model to use, [dcp]')
     parser.add_argument('--emb_nn', type=str, default='pointnet', metavar='N',
                         choices=['pointnet', 'dgcnn'],
@@ -597,23 +633,27 @@ def main():
     else:
         raise Exception("not implemented")
 
+    net = None
     if args.model == 'dcp':
         net = DCP(args).cuda()
-        if args.eval:
-            if args.model_path is '':
-                model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'
-            else:
-                model_path = args.model_path
-                print(model_path)
-            if not os.path.exists(model_path):
-                print("can't find pretrained model")
-                return
-            net.load_state_dict(torch.load(model_path), strict=False)
-        if torch.cuda.device_count() > 1:
-            net = nn.DataParallel(net)
-            print("Let's use", torch.cuda.device_count(), "GPUs!")
+    elif args.model == 'dcp++':
+        net = DCP_plus_plus(args).cuda()
     else:
-        raise Exception('Not implemented')
+        raise Exception(f'Model {args.model} not implemented')
+        
+    if args.eval:
+        if args.model_path == '':
+            model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'
+        else:
+            model_path = args.model_path
+            print(model_path)
+        if not os.path.exists(model_path):
+            print("can't find pretrained model")
+            return
+        net.load_state_dict(torch.load(model_path), strict=False)
+    if torch.cuda.device_count() > 1:
+        net = nn.DataParallel(net)
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
     if args.eval:
         test(args, net, test_loader, boardio, textio)
     else:
