@@ -514,6 +514,8 @@ def train(args, net, train_loader, test_loader, boardio, textio):
 
 def main():
     parser = argparse.ArgumentParser(description='Point Cloud Registration')
+    parser.add_argument('--data_size', type=int, default=None, metavar='N',
+                        help='Data size')
     parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
                         help='Name of the experiment')
     parser.add_argument('--model', type=str, default='dcp', metavar='N',
@@ -586,11 +588,11 @@ def main():
     if args.dataset == 'modelnet40':
         train_loader = DataLoader(
             ModelNet40(num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
-                       unseen=args.unseen, factor=args.factor),
+                       unseen=args.unseen, factor=args.factor, data_size=args.data_size),
             batch_size=args.batch_size, shuffle=True, drop_last=True)
         test_loader = DataLoader(
             ModelNet40(num_points=args.num_points, partition='test', gaussian_noise=args.gaussian_noise,
-                       unseen=args.unseen, factor=args.factor),
+                       unseen=args.unseen, factor=args.factor, data_size=args.data_size),
             batch_size=args.test_batch_size, shuffle=False, drop_last=False)
     else:
         raise Exception("not implemented")
