@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from util import quat2mat
 from difficp import ICP6DoF
-from hypericp import torch_solve_batch
+from hypericp import torch_compute_components, torch_compute_components_already_centered, torch_solve_batch
 
 from difficp.utils.geometry_utils import euler_angles_to_rotation_matrix, rotation_matrix_to_euler_angles
 
@@ -620,6 +620,37 @@ class DCP_DiffICP(nn.Module):
 
         return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
 
+def get_important_singular_values(U1, S1, U2, S2):
+    def f(svs):
+        if svs[0] > svs[1] + 5e-1:
+            return 0
+        return 2
+ 
+    us1, us2 = [], []
+    bs = U1.shape[0]
+    for i in range(U1.shape[0]):
+        col = f(S1[i])
+        # us1.append(S1[i][col] / S2[i][col] * torch.gather(U1[i], 1, torch.tensor([[col]] * 3, device=U1.device)))
+        # Or the other way around, i.e., S2[i][col] / S1[i][col]!
+        # Or any combination: also put S1[i][col] * in the second line, for `U2`.
+        t1 = torch.gather(U1[i], 1, torch.tensor([[col]] * 3, device=U1.device))
+        t2 = torch.gather(U2[i], 1, torch.tensor([[col]] * 3, device=U2.device))
+        # print(f't1.shape={t1.shape}, t2.shape={t2.shape}, S1[i]={S1[i]}, S2[i]={S2[i]}')
+        # t1 *= S1[i][col]# S1[i]
+        # factor = S2[i] / S1[i]
+        # print(f'factor.shape={factor.shape}')
+        # t2 *= S2[i][col]
+        # t2 *= (S2[i] / S1[i]).unsqueeze(1)
+        # print(f't1.shape={t1.shape}, t2.shape={t2.shape}')
+        us1.append(t1)#torch.gather(U1[i], 1, torch.tensor([[col]] * 3, device=U1.device)))
+        us2.append(t2)#torch.gather(U2[i], 1, torch.tensor([[col]] * 3, device=U2.device)))
+    return torch.concat(us1, axis=0).reshape(bs, 3), torch.concat(us2, axis=0).reshape(bs, 3)
+
+def bdot(a, b):
+    B = a.shape[0]
+    S = a.shape[1]
+    return torch.bmm(a.view(B, 1, S), b.view(B, S, 1)).reshape(-1)
+
 class Sprinter(nn.Module):
     def __init__(self, args):
         super(Sprinter, self).__init__()
@@ -716,6 +747,12 @@ class Sprinter(nn.Module):
         assert torch.allclose(src.mean(dim=2, keepdim=True), torch.zeros_like(src_mean, device=src_mean.device), atol=1e-6)
         assert torch.allclose(tgt.mean(dim=2, keepdim=True), torch.zeros_like(tgt_mean, device=tgt_mean.device), atol=1e-6)
 
+        (U1, S1), (U2, S2) = torch_compute_components_already_centered(src, tgt)
+
+        I1, I2 = get_important_singular_values(U1, S1, U2, S2)
+
+        # print(f'U1={U1}, S1={S1}')
+
         if True:
             src_embedding = self.emb_nn(src)
             tgt_embedding = self.emb_nn(tgt)
@@ -762,7 +799,7 @@ class Sprinter(nn.Module):
                 # TODO: wait, is this the same for all?
                     eps = torch.randn_like(std)
                     # print(f'eps={eps.shape}')
-                    z += eps * std
+                    z += eps# * std
 
                 # Enforce positive angles <-- what if we're at pi / 2 <-- 
                 z = torch.abs(z)
@@ -796,7 +833,7 @@ class Sprinter(nn.Module):
                 if self.training:
                     eps = torch.randn_like(mu)
                     assert A.shape[0] == eps.shape[0]
-                    z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+                    z += eps#torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
                 
                 assert z.shape == mu.shape
                 z = torch.abs(z)
@@ -810,6 +847,9 @@ class Sprinter(nn.Module):
                 # test_loss = 0.5 * (S.diagonal(offset=0, dim1=-1, dim2=-2).sum(-1) - torch.log(torch.linalg.det(S)) - 3)
                 # assert torch.allclose(loss, test_loss)
                 # return loss
+
+            
+
 
             # print(f'pre_sigma={pre_sigma.shape}')
 
@@ -863,6 +903,20 @@ class Sprinter(nn.Module):
             rotation_ab, translation_ab = torch_solve_batch(src, tgt, verbose=False)
 
 
+        # TODO: should be the other way around?
+        # print(f'rotation_ab.shape={rotation_ab.shape}, I1.shape={I1.shape}')
+        mm1 = torch.matmul(rotation_ab, I1.unsqueeze(2)).squeeze(2)
+        # print(f'mm1={mm1}, I2={I2}')
+        # print(f'mm -')
+        # TODO: also account for sign (axis rotation)
+
+        # diff = 1 - torch.mean(bdot(mm1, I2))
+
+        # diff = torch.mean(1 - torch.dot())
+
+        diff = torch.mean(torch.mean((mm1 - I2)**2, dim=1))
+        print(f'diff={diff}')
+
         # TODO: should we reocompute translation?
         # TODO: yes, since the compute translation would be actually zero!!!
         # assert torch.allclose(translation_ab, torch.zeros)
@@ -880,4 +934,4 @@ class Sprinter(nn.Module):
         rotation_ba = rotation_ab.transpose(2, 1).contiguous()
         translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
 
-        return rotation_ab, translation_ab, rotation_ba, translation_ba, kl
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, kl, diff

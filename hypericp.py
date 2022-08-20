@@ -42,6 +42,10 @@ def torch_compute_components(source, target, index=2, verbose=False):
         return torch.linalg.svd((X.T - torch.mean(X, dim=1)).T, full_matrices=False)[:index]
     return apply(source, 'source'), apply(target, 'target')
 
+def torch_compute_components_already_centered(source, target, index=2, verbose=False):
+    def apply(X, msg):
+        return torch.linalg.svd(X, full_matrices=False)[:index]
+    return apply(source, 'source'), apply(target, 'target')
 
 # Check whether `R` is a valid rotation matrix.
 def is_valid(R, delta=1, verbose=False):

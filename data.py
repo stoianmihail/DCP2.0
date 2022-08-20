@@ -123,6 +123,9 @@ class ModelNet40(Dataset):
             return (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound)
 
         bound = int(usage['percentage'] * len(self.data) / 100)         
+        self.data = self.data[:bound]
+        self.label = self.label[:bound]
+
         if usage['type'] == 'train' or usage['type'] == 'test':
             if data_type is not None:
                 self.data = self.data[:bound]

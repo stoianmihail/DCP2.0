@@ -56,6 +56,7 @@ def test_one_epoch(args, net, test_loader):
 
     total_loss = 0
     total_kl_loss = 0
+    total_extra_loss = 0
     total_cycle_loss = 0
     num_examples = 0
     rotations_ab = []
@@ -81,7 +82,7 @@ def test_one_epoch(args, net, test_loader):
 
         batch_size = src.size(0)
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss, extra_loss = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -110,7 +111,7 @@ def test_one_epoch(args, net, test_loader):
         # TODO: and then applied `+ kl` in `loss`.
         # TODO: adapt this for DCP.
         loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-            - kl_loss
+            + extra_loss
         
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
@@ -123,6 +124,7 @@ def test_one_epoch(args, net, test_loader):
         total_loss += loss.item() * batch_size
         try:
             total_kl_loss += kl_loss.item() * batch_size
+            total_extra_loss += extra_loss.item() * batch_size
         except:
             pass
 
@@ -148,7 +150,7 @@ def test_one_epoch(args, net, test_loader):
     eulers_ab = np.concatenate(eulers_ab, axis=0)
     eulers_ba = np.concatenate(eulers_ba, axis=0)
 
-    return total_kl_loss * 1.0 / num_examples, total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
+    return total_extra_loss * 1.0 / num_examples, total_kl_loss * 1.0 / num_examples, total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
            mse_ab * 1.0 / num_examples, mae_ab * 1.0 / num_examples, \
            mse_ba * 1.0 / num_examples, mae_ba * 1.0 / num_examples, rotations_ab, \
            translations_ab, rotations_ab_pred, translations_ab_pred, rotations_ba, \
@@ -164,6 +166,7 @@ def train_one_epoch(args, net, train_loader, opt):
 
     total_loss = 0
     total_kl_loss = 0
+    total_extra_loss = 0
     total_cycle_loss = 0
     num_examples = 0
     rotations_ab = []
@@ -190,7 +193,7 @@ def train_one_epoch(args, net, train_loader, opt):
         batch_size = src.size(0)
         opt.zero_grad()
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss, extra_loss = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -212,7 +215,7 @@ def train_one_epoch(args, net, train_loader, opt):
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
         
         loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-             - kl_loss
+             + extra_loss
              
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
@@ -227,6 +230,7 @@ def train_one_epoch(args, net, train_loader, opt):
         total_loss += loss.item() * batch_size
         try:
             total_kl_loss += kl_loss.item() * batch_size
+            total_extra_loss += extra_loss.item() * batch_size
         except:
             pass
 
@@ -252,14 +256,14 @@ def train_one_epoch(args, net, train_loader, opt):
     eulers_ab = np.concatenate(eulers_ab, axis=0)
     eulers_ba = np.concatenate(eulers_ba, axis=0)
 
-    return total_kl_loss * 1.0 / num_examples, total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
+    return total_extra_loss * 1.0 / num_examples, total_kl_loss * 1.0 / num_examples, total_loss * 1.0 / num_examples, total_cycle_loss / num_examples, \
            mse_ab * 1.0 / num_examples, mae_ab * 1.0 / num_examples, \
            mse_ba * 1.0 / num_examples, mae_ba * 1.0 / num_examples, rotations_ab, \
            translations_ab, rotations_ab_pred, translations_ab_pred, rotations_ba, \
            translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba
 
 def test(args, net, test_loader, textio):
-    test_kl_loss, test_loss, test_cycle_loss, \
+    test_extra_loss, test_kl_loss, test_loss, test_cycle_loss, \
     test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
     test_rotations_ab_pred, \
     test_translations_ab_pred, test_rotations_ba, test_translations_ba, test_rotations_ba_pred, \
@@ -333,12 +337,12 @@ def train(args, net, train_loader, val_loader, boardio, textio):
         scheduler.step()
 
         # TODO: maybe add the delta in each dimension.
-        train_kl_loss, train_loss, train_cycle_loss, \
+        train_extra_loss, train_kl_loss, train_loss, train_cycle_loss, \
         train_mse_ab, train_mae_ab, train_mse_ba, train_mae_ba, train_rotations_ab, train_translations_ab, \
         train_rotations_ab_pred, \
         train_translations_ab_pred, train_rotations_ba, train_translations_ba, train_rotations_ba_pred, \
         train_translations_ba_pred, train_eulers_ab, train_eulers_ba = train_one_epoch(args, net, train_loader, opt)
-        val_kl_loss, val_loss, val_cycle_loss, \
+        val_extra_loss, val_kl_loss, val_loss, val_cycle_loss, \
         val_mse_ab, val_mae_ab, val_mse_ba, val_mae_ba, val_rotations_ab, val_translations_ab, \
         val_rotations_ab_pred, \
         val_translations_ab_pred, val_rotations_ba, val_translations_ba, val_rotations_ba_pred, \
@@ -441,12 +445,14 @@ def train(args, net, train_loader, val_loader, boardio, textio):
         boardio.add_scalar('train/kl-loss', -train_kl_loss, epoch)
         boardio.add_scalar('train/rotation/MSE', train_r_mse_ab, epoch)
         boardio.add_scalar('train/translation/MSE', train_t_mse_ab, epoch)
+        boardio.add_scalar('train/extra-loss', train_extra_loss, epoch)
         
         # Validation.
         boardio.add_scalar('val/loss', val_loss, epoch)
         boardio.add_scalar('val/kl-loss', -val_kl_loss, epoch)
         boardio.add_scalar('val/rotation/MSE', val_r_mse_ab, epoch)
         boardio.add_scalar('val/translation/MSE', val_t_mse_ab, epoch)
+        boardio.add_scalar('val/extra-loss', val_extra_loss, epoch)
         
         # Best validation.
         boardio.add_scalar('best_val/loss', best_val_loss, epoch)
