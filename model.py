@@ -628,7 +628,7 @@ class DCP_plus_plus(nn.Module):
                 # TODO: wait, is this the same for all?
                     eps = torch.randn_like(std)
                     # print(f'eps={eps.shape}')
-                    z += eps * std
+                    z += eps# * std
 
                 # Enforce positive angles <-- what if we're at pi / 2 <-- 
                 z = torch.abs(z)
@@ -662,7 +662,7 @@ class DCP_plus_plus(nn.Module):
                 if self.training:
                     eps = torch.randn_like(mu)
                     assert A.shape[0] == eps.shape[0]
-                    z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+                    z += eps#torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
                 
                 assert z.shape == mu.shape
                 z = torch.abs(z)

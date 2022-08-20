@@ -107,8 +107,7 @@ def test_one_epoch(args, net, test_loader):
             loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
                 + F.mse_loss(translation_ab_pred, translation_ab)
         elif args.model == 'dcp++':
-            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-                - kl_divergence
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity)# - kl_divergence
         assert loss is not None
     
         if args.cycle:
@@ -217,8 +216,7 @@ def train_one_epoch(args, net, train_loader, opt):
             loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
                 + F.mse_loss(translation_ab_pred, translation_ab)
         elif args.model == 'dcp++':
-            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-                - kl_divergence
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity)# - kl_divergence
         assert loss is not None
 
         if args.cycle:
@@ -313,6 +311,10 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         opt = optim.SGD(net.parameters(), lr=args.lr * 100, momentum=args.momentum, weight_decay=1e-4)
     else:
         print("Use Adam")
+        # if args.model == 'dcp':
+        #     opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=1e-4)
+        # else:
+        #     opt = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
         opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = MultiStepLR(opt, milestones=[75, 150, 200], gamma=0.1)
 
@@ -474,7 +476,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('A->B/train/translation/MSE', train_t_mse_ab, epoch)
         boardio.add_scalar('A->B/train/translation/RMSE', train_t_rmse_ab, epoch)
         boardio.add_scalar('A->B/train/translation/MAE', train_t_mae_ab, epoch)
-        boardio.add_scalar('A->B/train/KL', train_kl_loss)
+        boardio.add_scalar('A->B/train/KL', -train_kl_loss, epoch)
 
         boardio.add_scalar('B->A/train/loss', train_loss, epoch)
         boardio.add_scalar('B->A/train/MSE', train_mse_ba, epoch)
@@ -486,7 +488,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('B->A/train/translation/MSE', train_t_mse_ba, epoch)
         boardio.add_scalar('B->A/train/translation/RMSE', train_t_rmse_ba, epoch)
         boardio.add_scalar('B->A/train/translation/MAE', train_t_mae_ba, epoch)
-        boardio.add_scalar('B->A/train/KL', train_kl_loss)
+        boardio.add_scalar('B->A/train/KL', -train_kl_loss, epoch)
 
         ############TEST
         boardio.add_scalar('A->B/test/loss', test_loss, epoch)
@@ -499,7 +501,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('A->B/test/translation/MSE', test_t_mse_ab, epoch)
         boardio.add_scalar('A->B/test/translation/RMSE', test_t_rmse_ab, epoch)
         boardio.add_scalar('A->B/test/translation/MAE', test_t_mae_ab, epoch)
-        boardio.add_scalar('A->B/test/KL', test_kl_loss)
+        boardio.add_scalar('A->B/test/KL', -test_kl_loss, epoch)
 
         boardio.add_scalar('B->A/test/loss', test_loss, epoch)
         boardio.add_scalar('B->A/test/MSE', test_mse_ba, epoch)
@@ -511,7 +513,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('B->A/test/translation/MSE', test_t_mse_ba, epoch)
         boardio.add_scalar('B->A/test/translation/RMSE', test_t_rmse_ba, epoch)
         boardio.add_scalar('B->A/test/translation/MAE', test_t_mae_ba, epoch)
-        boardio.add_scalar('A->B/test/KL', test_kl_loss)
+        boardio.add_scalar('A->B/test/KL', -test_kl_loss, epoch)
 
         ############BEST TEST
         boardio.add_scalar('A->B/best_test/loss', best_test_loss, epoch)
@@ -524,7 +526,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('A->B/best_test/translation/MSE', best_test_t_mse_ab, epoch)
         boardio.add_scalar('A->B/best_test/translation/RMSE', best_test_t_rmse_ab, epoch)
         boardio.add_scalar('A->B/best_test/translation/MAE', best_test_t_mae_ab, epoch)
-        boardio.add_scalar('A->B/best_test/KL', best_test_kl_loss)
+        boardio.add_scalar('A->B/best_test/KL', -best_test_kl_loss, epoch)
 
         boardio.add_scalar('B->A/best_test/loss', best_test_loss, epoch)
         boardio.add_scalar('B->A/best_test/MSE', best_test_mse_ba, epoch)
@@ -536,7 +538,7 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         boardio.add_scalar('B->A/best_test/translation/MSE', best_test_t_mse_ba, epoch)
         boardio.add_scalar('B->A/best_test/translation/RMSE', best_test_t_rmse_ba, epoch)
         boardio.add_scalar('B->A/best_test/translation/MAE', best_test_t_mae_ba, epoch)
-        boardio.add_scalar('A->B/best_test/KL', best_test_kl_loss)
+        boardio.add_scalar('A->B/best_test/KL', -best_test_kl_loss, epoch)
 
         if torch.cuda.device_count() > 1:
             torch.save(net.module.state_dict(), 'checkpoints/%s/models/model.%d.t7' % (args.exp_name, epoch))
