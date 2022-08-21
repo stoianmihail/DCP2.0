@@ -118,6 +118,10 @@ class ModelNet40(Dataset):
         rotation_ab = Rotation.from_euler('zyx', [anglez, angley, anglex])
         pointcloud2 = rotation_ab.apply(pointcloud1.T).T + np.expand_dims(translation_ab, axis=1)
 
+        # if self.gaussian_noise:
+        #     pointcloud1 = jitter_pointcloud(pointcloud1)
+        #     pointcloud2 = jitter_pointcloud(pointcloud2)
+        
         euler_ab = np.asarray([anglez, angley, anglex])
         euler_ba = -euler_ab[::-1]
 

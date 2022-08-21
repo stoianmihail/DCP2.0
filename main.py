@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
 from data import ModelNet40
-from model import DCP, DCP_plus_plus
+from model import DCP, DCP_DiffICP, DCP_plus_plus
 from util import transform_point_cloud, npmat2euler
 import numpy as np
 from torch.utils.data import DataLoader
@@ -103,11 +103,11 @@ def test_one_epoch(args, net, test_loader):
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
         loss = None
-        if args.model == 'dcp':
+        if args.model == 'dcp' or args.model == 'difficp':
             loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
                 + F.mse_loss(translation_ab_pred, translation_ab)
         elif args.model == 'dcp++':
-            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity)# - kl_divergence
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) - kl_divergence
         assert loss is not None
     
         if args.cycle:
@@ -212,11 +212,11 @@ def train_one_epoch(args, net, train_loader, opt):
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
                 
         loss = None
-        if args.model == 'dcp':
+        if args.model == 'dcp' or args.model == 'difficp':
             loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
                 + F.mse_loss(translation_ab_pred, translation_ab)
         elif args.model == 'dcp++':
-            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity)# - kl_divergence
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) - kl_divergence
         assert loss is not None
 
         if args.cycle:
@@ -557,7 +557,7 @@ def main():
     parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
                         help='Name of the experiment')
     parser.add_argument('--model', type=str, default='dcp', metavar='N',
-                        choices=['dcp', 'dcp++'],
+                        choices=['dcp', 'dcp++', 'difficp'],
                         help='Model to use, [dcp]')
     parser.add_argument('--emb_nn', type=str, default='pointnet', metavar='N',
                         choices=['pointnet', 'dgcnn'],
@@ -640,6 +640,8 @@ def main():
         net = DCP(args).cuda()
     elif args.model == 'dcp++':
         net = DCP_plus_plus(args).cuda()
+    elif args.model == 'difficp':
+        net = DCP_DiffICP(args).cuda()
     else:
         raise Exception(f'Model {args.model} not implemented')
         
