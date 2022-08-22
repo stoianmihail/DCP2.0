@@ -86,11 +86,11 @@ class ModelNet40(Dataset):
         self.data, self.label = load_data(partition)
         self.data_size = data_size
 
-        same_sv_count = 0
-        for index in range(len(self.data)):
-            if check('s2', self.data[index], num_points):
-                same_sv_count += 1
-        print(f'~~~~~~~~ Original statistics: SAME = {same_sv_count / len(self.data)}, DISTINCT = {1 - same_sv_count / len(self.data)} ~~~~~~~~')
+        # same_sv_count = 0
+        # for index in range(len(self.data)):
+        #     if check('s2', self.data[index], num_points):
+        #         same_sv_count += 1
+        # print(f'~~~~~~~~ Original statistics: SAME = {same_sv_count / len(self.data)}, DISTINCT = {1 - same_sv_count / len(self.data)} ~~~~~~~~')
 
         if data_type is not None:
             ls = []
@@ -108,62 +108,64 @@ class ModelNet40(Dataset):
             self.label = self.label[:data_size]
 
         # Generate indices for point clouds where the singular values are the same.
-        def generate_sv_indices():
-            same_sv_indices = []
-            for index in range(len(self.data)):
-                if check('s2', self.data[index], num_points):
-                    same_sv_indices.append(index)
-            distinct_sv_indices = list(set(range(len(self.data))) - set(same_sv_indices))
+        # def generate_sv_indices():
+        #     same_sv_indices = []
+        #     for index in range(len(self.data)):
+        #         if check('s2', self.data[index], num_points):
+        #             same_sv_indices.append(index)
+        #     distinct_sv_indices = list(set(range(len(self.data))) - set(same_sv_indices))
 
-            # Compute bounds.
-            same_sv_bound = int(usage['percentage'] * len(same_sv_indices) / 100)
-            distinct_sv_bound = int(usage['percentage'] * len(distinct_sv_indices) / 100)
+        #     # Compute bounds.
+        #     same_sv_bound = int(usage['percentage'] * len(same_sv_indices) / 100)
+        #     distinct_sv_bound = int(usage['percentage'] * len(distinct_sv_indices) / 100)
 
-            # And return.
-            return (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound)
+        #     # And return.
+        #     return (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound)
 
-        bound = int(usage['percentage'] * len(self.data) / 100)         
+        # TODO: I think setting `self.data` should *NOT* be done in parallel with the below if:
+        # if usage['type'] == 'train' or usage['type'] == 'test':
+        bound = int(usage['percentage'] * len(self.data) / 100) if usage['percentage'] < 100 else len(self.data)        
         self.data = self.data[:bound]
         self.label = self.label[:bound]
 
-        if usage['type'] == 'train' or usage['type'] == 'test':
-            if data_type is not None:
-                self.data = self.data[:bound]
-                self.label = self.label[:bound]
-            else:
-                # Compute indices.
-                (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound) = generate_sv_indices()
+        # if usage['type'] == 'train' or usage['type'] == 'test':
+        #     if data_type is not None:
+        #         self.data = self.data[:bound]
+        #         self.label = self.label[:bound]
+        #     else:
+        #         # Compute indices.
+        #         (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound) = generate_sv_indices()
 
-                # Slice.
-                same_sv_indices = np.asarray(same_sv_indices)[:same_sv_bound]
-                distinct_sv_indices = np.asarray(distinct_sv_indices)[:distinct_sv_bound]
+        #         # Slice.
+        #         same_sv_indices = np.asarray(same_sv_indices)[:same_sv_bound]
+        #         distinct_sv_indices = np.asarray(distinct_sv_indices)[:distinct_sv_bound]
 
-                # And take the point clouds at those indices.
-                self.data = self.data[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
-                self.label = self.label[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
-        else:
-            if data_type is not None:
-                self.data = self.data[len(self.data) - bound:]
-                # In case you want to update this line, make sure you don't write `len(self.data) - bound`.
-                # In that case, `self.data` has been already modified.
-                self.label = self.label[len(self.label) - bound:]
-            else:
-                # Compute indices.
-                (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound) = generate_sv_indices()
+        #         # And take the point clouds at those indices.
+        #         self.data = self.data[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
+        #         self.label = self.label[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
+        # else:
+        #     if data_type is not None:
+        #         self.data = self.data[len(self.data) - bound:]
+        #         # In case you want to update this line, make sure you don't write `len(self.data) - bound`.
+        #         # In that case, `self.data` has been already modified.
+        #         self.label = self.label[len(self.label) - bound:]
+        #     else:
+        #         # Compute indices.
+        #         (same_sv_indices, same_sv_bound), (distinct_sv_indices, distinct_sv_bound) = generate_sv_indices()
 
-                # Slice.
-                same_sv_indices = np.asarray(same_sv_indices)[len(same_sv_indices) - same_sv_bound:]
-                distinct_sv_indices = np.asarray(distinct_sv_indices)[len(distinct_sv_indices) - distinct_sv_bound:]
+        #         # Slice.
+        #         same_sv_indices = np.asarray(same_sv_indices)[len(same_sv_indices) - same_sv_bound:]
+        #         distinct_sv_indices = np.asarray(distinct_sv_indices)[len(distinct_sv_indices) - distinct_sv_bound:]
 
-                # And take the point clouds at those indices.
-                self.data = self.data[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
-                self.label = self.label[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
+        #         # And take the point clouds at those indices.
+        #         self.data = self.data[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
+        #         self.label = self.label[np.concatenate((same_sv_indices, distinct_sv_indices), axis=0)]
 
-        new_same_sv_count = 0
-        for index in range(len(self.data)):
-            if check('s2', self.data[index], num_points):
-                new_same_sv_count += 1
-        print(f'~~~~~~~~ New statistics: SAME = {new_same_sv_count / len(self.data)}, DISTINCT = {1 - new_same_sv_count / len(self.data)} ~~~~~~~~')
+        # new_same_sv_count = 0
+        # for index in range(len(self.data)):
+        #     if check('s2', self.data[index], num_points):
+        #         new_same_sv_count += 1
+        # print(f'~~~~~~~~ New statistics: SAME = {new_same_sv_count / len(self.data)}, DISTINCT = {1 - new_same_sv_count / len(self.data)} ~~~~~~~~')
 
         print(f'**************** DATA usage={usage["type"]} = {len(self.data)} *****************')
 
@@ -187,8 +189,8 @@ class ModelNet40(Dataset):
 
     def __getitem__(self, item):
         pointcloud = self.data[item][:self.num_points]
-        if self.gaussian_noise:
-            pointcloud = jitter_pointcloud(pointcloud)
+        # if self.gaussian_noise:
+        #     pointcloud = jitter_pointcloud(pointcloud)
 
         if self.partition != 'train':
             np.random.seed(item)
@@ -234,9 +236,9 @@ class ModelNet40(Dataset):
             pointcloud2 = np.random.permutation(pointcloud2.T).T
 
         # TODO: maybe vary the noise.
-        # if self.gaussian_noise:
-        #     pointcloud1 = jitter_pointcloud(pointcloud1)
-        #     pointcloud2 = jitter_pointcloud(pointcloud2)
+        if self.gaussian_noise:
+            pointcloud1 = jitter_pointcloud(pointcloud1)
+            pointcloud2 = jitter_pointcloud(pointcloud2)
 
         return pointcloud1.astype('float32'), pointcloud2.astype('float32'), R_ab.astype('float32'), \
                translation_ab.astype('float32'), R_ba.astype('float32'), translation_ba.astype('float32'), \

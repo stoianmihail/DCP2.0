@@ -461,34 +461,34 @@ class DCP(nn.Module):
         self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
         self.failures = 0
 
-    def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
-        batch_size = src.size()[0]
-        rotations, translations = [], []
-        icp = self.icp if full_icp else self.difficp
-        num_iters = []
+    # def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
+    #     batch_size = src.size()[0]
+    #     rotations, translations = [], []
+    #     icp = self.icp if full_icp else self.difficp
+    #     num_iters = []
 
-        # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
-        for i in range(batch_size):
-            icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
-            icp_init_pose[:3, :3] = rotation[i]
-            icp_init_pose[:3, 3] = translation[i]
-            try:
-                pred_pose, num_iter, mse = icp(
-                    src[i].transpose(0, 1),
-                    tgt[i].transpose(0, 1),
-                    icp_init_pose,
-                )
-                num_iters.append(num_iter)
-                rotations.append(pred_pose[:3, :3])
-                translations.append(pred_pose[:3, 3])
-            except Exception as e:
-                print(e)
-                rotations.append(rotation[i])
-                translations.append(translation[i])
-                self.failures += 1
-                print(self.failures)
-        print(f'num_iters={num_iters}')
-        return torch.stack(rotations, 0), torch.stack(translations, 0), torch.Tensor(num_iters)
+    #     # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
+    #     for i in range(batch_size):
+    #         icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
+    #         icp_init_pose[:3, :3] = rotation[i]
+    #         icp_init_pose[:3, 3] = translation[i]
+    #         try:
+    #             pred_pose, num_iter, mse = icp(
+    #                 src[i].transpose(0, 1),
+    #                 tgt[i].transpose(0, 1),
+    #                 icp_init_pose,
+    #             )
+    #             num_iters.append(num_iter)
+    #             rotations.append(pred_pose[:3, :3])
+    #             translations.append(pred_pose[:3, 3])
+    #         except Exception as e:
+    #             print(e)
+    #             rotations.append(rotation[i])
+    #             translations.append(translation[i])
+    #             self.failures += 1
+    #             print(self.failures)
+    #     print(f'num_iters={num_iters}')
+    #     return torch.stack(rotations, 0), torch.stack(translations, 0), torch.Tensor(num_iters)
 
     def forward(self, *input):
         src = input[0]
@@ -503,12 +503,12 @@ class DCP(nn.Module):
 
         rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
 
-        if not self.training:
-            rotation_ab, translation_ab, num_iters  = self._refine_with_icp(
-                src, tgt, rotation_ab, translation_ab, full_icp=True
-            )
+        # if not self.training:
+        #     rotation_ab, translation_ab, num_iters  = self._refine_with_icp(
+        #         src, tgt, rotation_ab, translation_ab#, full_icp=True
+        #     )
 
-            print(f'torch.mean(num_iters)={torch.mean(num_iters)}')
+        #     print(f'torch.mean(num_iters)={torch.mean(num_iters)}')
 
         if self.cycle:
             rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
@@ -747,9 +747,9 @@ class Sprinter(nn.Module):
         assert torch.allclose(src.mean(dim=2, keepdim=True), torch.zeros_like(src_mean, device=src_mean.device), atol=1e-6)
         assert torch.allclose(tgt.mean(dim=2, keepdim=True), torch.zeros_like(tgt_mean, device=tgt_mean.device), atol=1e-6)
 
-        (U1, S1), (U2, S2) = torch_compute_components_already_centered(src, tgt)
+        # (U1, S1), (U2, S2) = torch_compute_components_already_centered(src, tgt)
 
-        I1, I2 = get_important_singular_values(U1, S1, U2, S2)
+        # I1, I2 = get_important_singular_values(U1, S1, U2, S2)
 
         # print(f'U1={U1}, S1={S1}')
 
@@ -799,7 +799,7 @@ class Sprinter(nn.Module):
                 # TODO: wait, is this the same for all?
                     eps = torch.randn_like(std)
                     # print(f'eps={eps.shape}')
-                    z += eps# * std
+                    z += eps * std
 
                 # Enforce positive angles <-- what if we're at pi / 2 <-- 
                 z = torch.abs(z)
@@ -833,7 +833,7 @@ class Sprinter(nn.Module):
                 if self.training:
                     eps = torch.randn_like(mu)
                     assert A.shape[0] == eps.shape[0]
-                    z += eps#torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+                    z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
                 
                 assert z.shape == mu.shape
                 z = torch.abs(z)
@@ -905,7 +905,7 @@ class Sprinter(nn.Module):
 
         # TODO: should be the other way around?
         # print(f'rotation_ab.shape={rotation_ab.shape}, I1.shape={I1.shape}')
-        mm1 = torch.matmul(rotation_ab, I1.unsqueeze(2)).squeeze(2)
+        # mm1 = torch.matmul(rotation_ab, I1.unsqueeze(2)).squeeze(2)
         # print(f'mm1={mm1}, I2={I2}')
         # print(f'mm -')
         # TODO: also account for sign (axis rotation)
@@ -914,8 +914,8 @@ class Sprinter(nn.Module):
 
         # diff = torch.mean(1 - torch.dot())
 
-        diff = torch.mean(torch.mean((mm1 - I2)**2, dim=1))
-        print(f'diff={diff}')
+        # diff = torch.mean(torch.mean((mm1 - I2)**2, dim=1))
+        # print(f'diff={diff}')
 
         # TODO: should we reocompute translation?
         # TODO: yes, since the compute translation would be actually zero!!!
@@ -934,4 +934,4 @@ class Sprinter(nn.Module):
         rotation_ba = rotation_ab.transpose(2, 1).contiguous()
         translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
 
-        return rotation_ab, translation_ab, rotation_ba, translation_ba, kl, diff
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, kl

@@ -82,7 +82,7 @@ def test_one_epoch(args, net, test_loader):
 
         batch_size = src.size(0)
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss, extra_loss = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -110,9 +110,11 @@ def test_one_epoch(args, net, test_loader):
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
         # TODO: adapt this for DCP.
-        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-            + extra_loss
-        
+        if args.model == 'dcp':
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+               + F.mse_loss(translation_ab_pred, translation_ab)
+        else:
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) - kl_loss
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
             translation_loss = torch.mean((torch.matmul(rotation_ba_pred.transpose(2, 1),
@@ -124,7 +126,7 @@ def test_one_epoch(args, net, test_loader):
         total_loss += loss.item() * batch_size
         try:
             total_kl_loss += kl_loss.item() * batch_size
-            total_extra_loss += extra_loss.item() * batch_size
+            total_extra_loss += 0#extra_loss.item() * batch_size
         except:
             pass
 
@@ -193,7 +195,7 @@ def train_one_epoch(args, net, train_loader, opt):
         batch_size = src.size(0)
         opt.zero_grad()
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss, extra_loss = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_loss = net(src, target)
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
@@ -214,9 +216,11 @@ def train_one_epoch(args, net, train_loader, opt):
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
         
-        loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
-             + extra_loss
-             
+        if args.model == 'dcp':
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
+               + F.mse_loss(translation_ab_pred, translation_ab)
+        else:
+            loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) - kl_loss
         if args.cycle:
             rotation_loss = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity.clone())
             translation_loss = torch.mean((torch.matmul(rotation_ba_pred.transpose(2, 1),
@@ -230,7 +234,7 @@ def train_one_epoch(args, net, train_loader, opt):
         total_loss += loss.item() * batch_size
         try:
             total_kl_loss += kl_loss.item() * batch_size
-            total_extra_loss += extra_loss.item() * batch_size
+            total_extra_loss += 0#extra_loss.item() * batch_size
         except:
             pass
 
@@ -550,7 +554,7 @@ def main():
         # Load training set (only 80%).
         if not args.eval:
             train_loader = DataLoader(
-                ModelNet40(usage={'type' : 'train', 'percentage' : 80}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
+                ModelNet40(usage={'type' : 'train', 'percentage' : 100}, num_points=args.num_points, partition='train', gaussian_noise=args.gaussian_noise,
                             permute=args.permute,
                         unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type, max_epochs=args.epochs),
                 batch_size=args.batch_size, shuffle=True, drop_last=True)
@@ -564,12 +568,12 @@ def main():
                 batch_size=args.test_batch_size, shuffle=False, drop_last=False)
         
         # Load full test set.
-        if args.eval:
-            test_loader = DataLoader(
-                ModelNet40(usage={'type' : 'test', 'percentage' : 100}, num_points=args.num_points, partition='test', gaussian_noise=args.gaussian_noise,
-                            permute=args.permute,
-                        unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
-                batch_size=args.test_batch_size, shuffle=False, drop_last=False)
+        # if args.eval:
+        test_loader = DataLoader(
+            ModelNet40(usage={'type' : 'test', 'percentage' : 100}, num_points=args.num_points, partition='test', gaussian_noise=args.gaussian_noise,
+                        permute=args.permute,
+                    unseen=args.unseen, factor=args.factor, data_size=args.data_size, data_type=args.data_type),
+            batch_size=args.test_batch_size, shuffle=False, drop_last=False)
     else:
         raise Exception("not implemented")
 
@@ -604,7 +608,7 @@ def main():
     if args.eval:
         test(args, net, test_loader, textio)
     else:
-        train(args, net, train_loader, val_loader, boardio, textio)
+        train(args, net, train_loader, test_loader, boardio, textio)
 
     print('FINISH')
     boardio.close()
