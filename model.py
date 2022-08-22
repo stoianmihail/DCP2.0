@@ -593,10 +593,10 @@ class DCP_DiffICP(nn.Module):
             rotation_ab, translation_ab = self._refine_with_icp(
                 src, tgt, rotation_ab, translation_ab, full_icp=False
             )
-        # else:
-        #     rotation_ab, translation_ab = self._refine_with_icp(
-        #         src, tgt, rotation_ab, translation_ab, full_icp=True
-        #     )
+        else:
+            rotation_ab, translation_ab = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab, full_icp=True
+            )
            
         if self.cycle:
             rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
@@ -814,7 +814,7 @@ class DCP_plus_plus(nn.Module):
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        _, tmp, mu = self.head(src_embedding, tgt_embedding, src, tgt)
+        rotation_ab, tmp, mu = self.head(src_embedding, tgt_embedding, src, tgt)
 
         translation_ab = torch.zeros_like(tmp)
 
@@ -865,9 +865,9 @@ class DCP_plus_plus(nn.Module):
             if self.training:
                 eps = torch.randn_like(mu)
                 assert A.shape[0] == eps.shape[0]
-                eps = torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1) 
-                eps *= torch.exp(self.flow(combined_embedding))
-                z += eps#torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+                # eps = torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1) 
+                # eps *= torch.exp(self.flow(combined_embedding))
+                z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
             
             assert z.shape == mu.shape
             z = torch.abs(z)
@@ -881,11 +881,11 @@ class DCP_plus_plus(nn.Module):
             rotation_ab, translation_ab = self._refine_with_icp(
                 src, tgt, rotation_ab, translation_ab
             )
-        # else:
-        #     assert not translation_ab.requires_grad
-        #     rotation_ab, translation_ab = self._refine_with_icp(
-        #         src, tgt, rotation_ab, translation_ab, full_icp=True
-        #     )
+        else:
+            assert not translation_ab.requires_grad
+            rotation_ab, translation_ab = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab, full_icp=True
+            )
  
         translation_ab = (torch.matmul(-rotation_ab, src_mean) + tgt_mean).squeeze(2)
 

@@ -83,8 +83,8 @@ class ModelNet40(Dataset):
 
     def __getitem__(self, item):
         pointcloud = self.data[item][:self.num_points]
-        if self.gaussian_noise:
-            pointcloud = jitter_pointcloud(pointcloud)
+        # if self.gaussian_noise:
+        #     pointcloud = jitter_pointcloud(pointcloud)
         
         if self.partition != 'train':
             np.random.seed(item)

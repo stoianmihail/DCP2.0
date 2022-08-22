@@ -315,9 +315,13 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         #     opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=1e-4)
         # else:
         #     opt = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
-        opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = MultiStepLR(opt, milestones=[75, 150, 200], gamma=0.1)
-
+        opt = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler = None
+    if args.model == 'dcp++' or args.model == 'difficp':
+        # Worked pretty well with this setting.
+        scheduler = MultiStepLR(opt, milestones=[150, 200], gamma=0.1)
+    else:
+        scheduler = MultiStepLR(opt, milestones=[75, 150, 200], gamma=0.1)        
 
     best_test_loss = np.inf
     best_test_kl_loss = np.inf
