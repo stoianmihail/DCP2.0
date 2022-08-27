@@ -110,7 +110,7 @@ def test_one_epoch(args, net, test_loader):
         # TODO: here it's a - before.
         # TODO: and then applied `+ kl` in `loss`.
         # TODO: adapt this for DCP.
-        if args.model == 'dcp':
+        if args.model == 'dcp' or args.model == 'dcp_difficp':
             loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
                + F.mse_loss(translation_ab_pred, translation_ab)
         else:
@@ -216,7 +216,7 @@ def train_one_epoch(args, net, train_loader, opt):
         ###########################
         identity = torch.eye(3).cuda().unsqueeze(0).repeat(batch_size, 1, 1)
         
-        if args.model == 'dcp':
+        if args.model == 'dcp' or args.model == 'dcp_difficp':
             loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
                + F.mse_loss(translation_ab_pred, translation_ab)
         else:
