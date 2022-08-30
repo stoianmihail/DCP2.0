@@ -21,7 +21,7 @@ def download():
     if not os.path.exists(os.path.join(DATA_DIR, 'modelnet40_ply_hdf5_2048')):
         www = 'https://shapenet.cs.stanford.edu/media/modelnet40_ply_hdf5_2048.zip'
         zipfile = os.path.basename(www)
-        os.system('wget %s; unzip %s' % (www, zipfile))
+        os.system('wget %s --no-check-certificate; unzip %s' % (www, zipfile))
         os.system('mv %s %s' % (zipfile[:-4], DATA_DIR))
         os.system('rm %s' % (zipfile))
 
@@ -75,11 +75,11 @@ class ModelNet40(Dataset):
         if self.unseen:
             ######## simulate testing on first 20 categories while training on last 20 categories
             if self.partition == 'test':
-                self.data = self.data[self.label>=20]
-                self.label = self.label[self.label>=20]
+                self.data = self.data[self.label>=20][:1]
+                self.label = self.label[self.label>=20][:1]
             elif self.partition == 'train':
-                self.data = self.data[self.label<20]
-                self.label = self.label[self.label<20]
+                self.data = self.data[self.label<20][:1]
+                self.label = self.label[self.label<20][:1]
 
     def __getitem__(self, item):
         pointcloud = self.data[item][:self.num_points]
@@ -139,6 +139,7 @@ class ModelNet40(Dataset):
 if __name__ == '__main__':
     train = ModelNet40(1024)
     test = ModelNet40(1024, 'test')
+    print(len(train))
     for data in train:
         print(len(data))
         break
