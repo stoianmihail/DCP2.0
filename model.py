@@ -504,10 +504,10 @@ class DCP(nn.Module):
 
         rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
 
-        # if not self.training:
-        #     rotation_ab, translation_ab = self._refine_with_icp(
-        #         src, tgt, rotation_ab, translation_ab, full_icp=True
-        #     )
+        if not self.training:
+            rotation_ab, translation_ab = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab, full_icp=True
+            )
            
         if self.cycle:
             rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
@@ -724,7 +724,8 @@ class DCP_plus_plus(nn.Module):
 
         # TODO: but don't we need the `InitPoseICP`???
         icp_kwargs = {"verbose": False}
-        self.difficp = ICP6DoF(differentiable=True, iters_max=1, **icp_kwargs)
+        print(f'iters_max={args.difficp_iters_max}')
+        self.difficp = ICP6DoF(differentiable=True, iters_max=args.difficp_iters_max, **icp_kwargs)
         self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
         self.failures = 0
         
@@ -743,17 +744,17 @@ class DCP_plus_plus(nn.Module):
 
         # self.flows = torch.tensor([AffineHalfFlow(i % 2, self.emb_dims) for i in range(4)]
 
-        self.flow = nn.Sequential(
-            nn.Linear(self.emb_dims * 2, self.emb_dims // 2),
-            MyBatchNorm1d(self.emb_dims // 2),
-            nn.LeakyReLU(),
-            nn.Linear(self.emb_dims // 2, self.emb_dims // 8),
-            MyBatchNorm1d(self.emb_dims // 8),
-            nn.LeakyReLU(),
-            nn.Linear(self.emb_dims // 8, 3),
-            nn.Softplus() # TODO: is this necessasry?
+        # self.flow = nn.Sequential(
+        #     nn.Linear(self.emb_dims * 2, self.emb_dims // 2),
+        #     MyBatchNorm1d(self.emb_dims // 2),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(self.emb_dims // 2, self.emb_dims // 8),
+        #     MyBatchNorm1d(self.emb_dims // 8),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(self.emb_dims // 8, 3),
+        #     nn.Softplus() # TODO: is this necessasry?
             
-            )
+        #     )
 
     def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
         batch_size = src.size()[0]
@@ -809,6 +810,9 @@ class DCP_plus_plus(nn.Module):
         src_embedding = self.emb_nn(src)
         tgt_embedding = self.emb_nn(tgt)
 
+        combined_embedding = torch.cat([src_embedding, tgt_embedding], 1)
+        combined_embedding = F.adaptive_max_pool1d(combined_embedding, 1).squeeze(-1)
+
         src_embedding_p, tgt_embedding_p = self.pointer(src_embedding, tgt_embedding)
 
         src_embedding = src_embedding + src_embedding_p
@@ -817,9 +821,6 @@ class DCP_plus_plus(nn.Module):
         rotation_ab, tmp, mu = self.head(src_embedding, tgt_embedding, src, tgt)
 
         translation_ab = torch.zeros_like(tmp)
-
-        combined_embedding = torch.cat([src_embedding, tgt_embedding], 1)
-        combined_embedding = F.adaptive_max_pool1d(combined_embedding, 1).squeeze(-1)
 
         # TODO: implement rotation matrix trick, that we transform the delta angles into rotation matrix.
         # TODO: then we don't need to apply `rotation_matrix_to_euler_angles` anymore in `self.head` <- more precise + more efficient.
@@ -881,11 +882,11 @@ class DCP_plus_plus(nn.Module):
             rotation_ab, translation_ab = self._refine_with_icp(
                 src, tgt, rotation_ab, translation_ab
             )
-        else:
-            assert not translation_ab.requires_grad
-            rotation_ab, translation_ab = self._refine_with_icp(
-                src, tgt, rotation_ab, translation_ab, full_icp=True
-            )
+        # else:
+        #     assert not translation_ab.requires_grad
+        #     rotation_ab, translation_ab = self._refine_with_icp(
+        #         src, tgt, rotation_ab, translation_ab, full_icp=True
+        #     )
  
         translation_ab = (torch.matmul(-rotation_ab, src_mean) + tgt_mean).squeeze(2)
 
@@ -893,3 +894,45 @@ class DCP_plus_plus(nn.Module):
         translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
 
         return rotation_ab, translation_ab, rotation_ba, translation_ba, kl
+
+
+
+class MyICP(nn.Module):
+    def __init__(self, args):
+        super(MyICP, self).__init__()
+        icp_kwargs = {"verbose": False}
+        self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
+        
+    def _refine_with_icp(self, src, tgt):
+        batch_size = src.size()[0]
+        rotations, translations = [], []
+        icp = self.icp
+        for i in range(batch_size):
+            try:
+                pred_pose, _, _ = icp(
+                    src[i].transpose(0, 1),
+                    tgt[i].transpose(0, 1),
+                )
+                rotations.append(pred_pose[:3, :3])
+                translations.append(pred_pose[:3, 3])
+            except Exception as e:
+                print(e)
+                assert 0
+                # rotations.append(rotation[i])
+                # translations.append(translation[i])
+                self.failures += 1
+                print(self.failures)
+        return torch.stack(rotations, 0), torch.stack(translations, 0)
+
+    def forward(self, *input):
+        src = input[0]
+        tgt = input[1]
+
+        rotation_ab, translation_ab = self._refine_with_icp(
+            src, tgt
+        )
+
+        rotation_ba = rotation_ab.transpose(2, 1).contiguous()
+        translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
+
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
