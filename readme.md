@@ -2,6 +2,13 @@
 
 DCP++ performs almost twice as well as DCP and provides more robust ICP initializations.
 
+## Recursive Clone
+
+```
+git clone --recursive https://github.com/stoianmihail/DCP2.0.git
+cd DCP2.0
+```
+
 ## Prerequisites 
 
 PyTorch>=1.0: https://pytorch.org
