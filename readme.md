@@ -5,10 +5,12 @@ DCP++ performs almost twice as well as DCP and provides more robust ICP initiali
 ## Prerequisites 
 
 PyTorch>=1.0: https://pytorch.org
+
 scipy>=1.2 
+
 numpy
-h5py
-tqdm
+
+h5pytqdm
 
 TensorboardX: https://github.com/lanpa/tensorboardX
 
