@@ -1,0 +1,17 @@
+trimesh
+smplx
+pyrender
+torch
+numpy
+matplotlib
+opencv-python
+pyntcloud
+pytorch3d
+kornia
+chumpy
+open3d
+addict
+plyfile
+sklearn
+seaborn
+pytorch_lightning
