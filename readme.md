@@ -9,17 +9,11 @@ git clone --recursive https://github.com/stoianmihail/DCP2.0.git
 cd DCP2.0
 ```
 
-## Prerequisites 
+## Requirements 
 
-PyTorch>=1.0: https://pytorch.org
-
-scipy>=1.2 
-
-numpy
-
-h5pytqdm
-
-TensorboardX: https://github.com/lanpa/tensorboardX
+```
+pip3 install -r requirements.txt
+```
 
 ## Training
 
