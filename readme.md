@@ -25,18 +25,26 @@ TensorboardX: https://github.com/lanpa/tensorboardX
 
 ### DCP
 
+```
 python main.py --exp_name=dcp --model=dcp --emb_nn=dgcnn --pointer=identity --head=svd
+```
 
 ### DCP++
 
+```
 python main.py --exp_name=dcp++ --model=dcp++ --emb_nn=dgcnn --pointer=transformer --head=svd
+```
 
 ## Testing
 
 ### DCP
 
+```
 python main.py --exp_name=dcp --model=dcp --emb_nn=dgcnn --pointer=identity --head=svd --eval
+```
 
 ### DCP++
 
+```
 python main.py --exp_name=dcp++ --model=dcp++ --emb_nn=dgcnn --pointer=transformer --head=svd --eval
+```
