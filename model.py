@@ -14,7 +14,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from util import quat2mat
+from hypericp import torch_compute_components_already_centered
 
+from difficp import ICP6DoF
+from difficp.utils.geometry_utils import euler_angles_to_rotation_matrix, rotation_matrix_to_euler_angles
+
+torch.cuda.empty_cache()
 
 # Part of the code is referred from: http://nlp.seas.harvard.edu/2018/04/03/attention.html#positional-encoding
 
@@ -400,7 +405,7 @@ class SVDHead(nn.Module):
 
         U, S, V = [], [], []
         R = []
-
+        mus = []
         for i in range(src.size(0)):
             u, s, v = torch.svd(H[i])
             r = torch.matmul(v, u.transpose(1, 0).contiguous())
@@ -411,6 +416,7 @@ class SVDHead(nn.Module):
                 r = torch.matmul(v, u.transpose(1, 0).contiguous())
                 # r = r * self.reflect
             R.append(r)
+            mus.append(rotation_matrix_to_euler_angles(r, "zyx"))
 
             U.append(u)
             S.append(s)
@@ -422,7 +428,7 @@ class SVDHead(nn.Module):
         R = torch.stack(R, dim=0)
 
         t = torch.matmul(-R, src.mean(dim=2, keepdim=True)) + src_corr.mean(dim=2, keepdim=True)
-        return R, t.view(batch_size, 3)
+        return R, t.view(batch_size, 3), torch.stack(mus, dim=0)
 
 
 class DCP(nn.Module):
@@ -450,6 +456,40 @@ class DCP(nn.Module):
             self.head = SVDHead(args=args)
         else:
             raise Exception('Not implemented')
+        icp_kwargs = {"verbose": False}
+        self.difficp = ICP6DoF(differentiable=True, iters_max=1, **icp_kwargs)
+        self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
+        self.failures = 0
+        
+
+    def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
+        batch_size = src.size()[0]
+        rotations, translations = [], []
+        icp = self.icp if full_icp else self.difficp
+        # mse = []
+
+        # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
+        for i in range(batch_size):
+            icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
+            icp_init_pose[:3, :3] = rotation[i]
+            icp_init_pose[:3, 3] = translation[i]
+            try:
+                pred_pose, _, _ = icp(
+                    src[i].transpose(0, 1),
+                    tgt[i].transpose(0, 1),
+                    icp_init_pose,
+                )
+                # mse.append(mse_i)
+                rotations.append(pred_pose[:3, :3])
+                translations.append(pred_pose[:3, 3])
+            except Exception as e:
+                print(e)
+                rotations.append(rotation[i])
+                translations.append(translation[i])
+                self.failures += 1
+                print(self.failures)
+        # print(f'num_iters={num_iters}')
+        return torch.stack(rotations, 0), torch.stack(translations, 0)#, mse
 
     def forward(self, *input):
         src = input[0]
@@ -462,11 +502,437 @@ class DCP(nn.Module):
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
+        rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
+
+        if not self.training:
+            rotation_ab, translation_ab = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab, full_icp=True
+            )
+           
         if self.cycle:
             rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
-
         else:
             rotation_ba = rotation_ab.transpose(2, 1).contiguous()
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
-        return rotation_ab, translation_ab, rotation_ba, translation_ba
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
+
+class DCP_DiffICP(nn.Module):
+    def __init__(self, args):
+        super(DCP_DiffICP, self).__init__()
+        self.emb_dims = args.emb_dims
+        self.cycle = args.cycle
+        if args.emb_nn == 'pointnet':
+            self.emb_nn = PointNet(emb_dims=self.emb_dims)
+        elif args.emb_nn == 'dgcnn':
+            self.emb_nn = DGCNN(emb_dims=self.emb_dims)
+        else:
+            raise Exception('Not implemented')
+
+        if args.pointer == 'identity':
+            self.pointer = Identity()
+        elif args.pointer == 'transformer':
+            self.pointer = Transformer(args=args)
+        else:
+            raise Exception("Not implemented")
+
+        if args.head == 'mlp':
+            self.head = MLPHead(args=args)
+        elif args.head == 'svd':
+            self.head = SVDHead(args=args)
+        else:
+            raise Exception('Not implemented')
+        icp_kwargs = {"verbose": False}
+        self.difficp = ICP6DoF(differentiable=True, iters_max=1, **icp_kwargs)
+        self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
+        self.failures = 0
+        
+
+    def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
+        batch_size = src.size()[0]
+        rotations, translations = [], []
+        icp = self.icp if full_icp else self.difficp
+        # mse = []
+
+        # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
+        for i in range(batch_size):
+            icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
+            icp_init_pose[:3, :3] = rotation[i]
+            icp_init_pose[:3, 3] = translation[i]
+            try:
+                pred_pose, _, _ = icp(
+                    src[i].transpose(0, 1),
+                    tgt[i].transpose(0, 1),
+                    icp_init_pose,
+                )
+                # mse.append(mse_i)
+                rotations.append(pred_pose[:3, :3])
+                translations.append(pred_pose[:3, 3])
+            except Exception as e:
+                print(e)
+                rotations.append(rotation[i])
+                translations.append(translation[i])
+                self.failures += 1
+                print(self.failures)
+        # print(f'num_iters={num_iters}')
+        return torch.stack(rotations, 0), torch.stack(translations, 0)#, mse
+
+    def forward(self, *input):
+        src = input[0]
+        tgt = input[1]
+        src_embedding = self.emb_nn(src)
+        tgt_embedding = self.emb_nn(tgt)
+
+        src_embedding_p, tgt_embedding_p = self.pointer(src_embedding, tgt_embedding)
+
+        src_embedding = src_embedding + src_embedding_p
+        tgt_embedding = tgt_embedding + tgt_embedding_p
+
+        rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
+
+        if self.training:
+            rotation_ab, translation_ab = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab, full_icp=False
+            )
+        else:
+            rotation_ab, translation_ab = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab, full_icp=True
+            )
+           
+        if self.cycle:
+            rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
+        else:
+            rotation_ba = rotation_ab.transpose(2, 1).contiguous()
+            translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
+
+
+class MyBatchNorm1d(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.fn = nn.BatchNorm1d(dim)
+
+    def forward(self, x):
+        if x.size(0) > 1:
+            return self.fn(x) 
+        return x
+
+def get_important_singular_values(U1, S1, U2, S2):
+    def f(svs):
+        if svs[0] > svs[1] + 5e-1:
+            return 0
+        return 2
+ 
+    us1, us2 = [], []
+    bs = U1.shape[0]
+    for i in range(U1.shape[0]):
+        col = f(S1[i])
+        # us1.append(S1[i][col] / S2[i][col] * torch.gather(U1[i], 1, torch.tensor([[col]] * 3, device=U1.device)))
+        # Or the other way around, i.e., S2[i][col] / S1[i][col]!
+        # Or any combination: also put S1[i][col] * in the second line, for `U2`.
+        t1 = torch.gather(U1[i], 1, torch.tensor([[col]] * 3, device=U1.device))
+        t2 = torch.gather(U2[i], 1, torch.tensor([[col]] * 3, device=U2.device))
+        # print(f't1.shape={t1.shape}, t2.shape={t2.shape}, S1[i]={S1[i]}, S2[i]={S2[i]}')
+        # t1 *= S1[i][col]# S1[i]
+        # factor = S2[i] / S1[i]
+        # print(f'factor.shape={factor.shape}')
+        # t2 *= S2[i][col]
+        # t2 *= (S2[i] / S1[i]).unsqueeze(1)
+        # print(f't1.shape={t1.shape}, t2.shape={t2.shape}')
+        us1.append(t1)#torch.gather(U1[i], 1, torch.tensor([[col]] * 3, device=U1.device)))
+        us2.append(t2)#torch.gather(U2[i], 1, torch.tensor([[col]] * 3, device=U2.device)))
+    return torch.concat(us1, axis=0).reshape(bs, 3), torch.concat(us2, axis=0).reshape(bs, 3)
+
+
+class AffineHalfFlow(nn.Module):
+    """
+    As seen in RealNVP, affine autoregressive flow (z = x * exp(s) + t), where half of the 
+    dimensions in x are linearly scaled/transfromed as a function of the other half.
+    Which half is which is determined by the parity bit.
+    - RealNVP both scales and shifts (default)
+    - NICE only shifts
+    """
+    def __init__(self, parity, emb_dims):#, nh=24, scale=True, shift=True):
+        super(AffineHalfFlow, self).__init__()
+        # self.dim = dim
+        self.emb_dims = emb_dims
+        self.parity = parity
+        # self.s_cond = lambda x: x.new_zeros(x.size(0), self.dim // 2)
+        # self.t_cond = lambda x: x.new_zeros(x.size(0), self.dim // 2)
+
+        # TODO: also add shift!
+        # if scale:
+        #     self.s_cond = net_class(self.dim // 2, self.dim // 2, nh)
+        # if shift:
+        #     self.t_cond = net_class(self.dim // 2, self.dim // 2, nh)
+        
+        self.log_scale_nn = nn.Sequential(
+            nn.Linear(self.emb_dims * 2 + (2 if not parity else 1), self.emb_dims // 2),
+            MyBatchNorm1d(self.emb_dims // 2),
+            nn.LeakyReLU(),
+            nn.Linear(self.emb_dims // 2, self.emb_dims // 8),
+            MyBatchNorm1d(self.emb_dims // 8),
+            nn.LeakyReLU(),
+            nn.Linear(self.emb_dims // 8, 1 if not parity else 2),
+            nn.Softplus() # TODO: is this necessasry?    
+        )
+
+    def forward(self, data):
+        # print(f'data={data}')
+        (input, x) = data
+        x0, x1 = x[:,::2], x[:,1::2]
+        if self.parity:
+            x0, x1 = x1, x0
+        # concat_ = torch.cat([input, x0], dim=1)
+        # print(f'concat_=.shape={concat_.shape}')
+        log_scale = self.log_scale_nn(torch.cat([input, x0], dim=1))
+        z0 = x0 # untouched half
+        z1 = torch.exp(log_scale) * x1 # transform this half as a function of the other
+        if self.parity:
+            z0, z1 = z1, z0
+        z = torch.cat([z0, z1], dim=1)
+        return (input, z) 
+
+class DCP_plus_plus(nn.Module):
+    def __init__(self, args):
+        super(DCP_plus_plus, self).__init__()
+        self.emb_dims = args.emb_dims
+        self.cycle = args.cycle
+        self.formula = args.formula
+        print(f'Formula!!!!!!!!!!!!!! -> {self.formula}')
+        if args.emb_nn == 'pointnet':
+            self.emb_nn = PointNet(emb_dims=self.emb_dims)
+        elif args.emb_nn == 'dgcnn':
+            self.emb_nn = DGCNN(emb_dims=self.emb_dims)
+        else:
+            raise Exception('Not implemented')
+
+        if args.pointer == 'identity':
+            self.pointer = Identity()
+        elif args.pointer == 'transformer':
+            self.pointer = Transformer(args=args)
+        else:
+            raise Exception("Not implemented")
+
+        if args.head == 'mlp':
+            self.head = MLPHead(args=args)
+        elif args.head == 'svd':
+            self.head = SVDHead(args=args)
+        else:
+            raise Exception('Not implemented')
+
+        # self.eval = args.eval
+
+        # TODO: but don't we need the `InitPoseICP`???
+        icp_kwargs = {"verbose": False}
+        print(f'iters_max={args.difficp_iters_max}')
+        self.difficp = ICP6DoF(differentiable=True, iters_max=args.difficp_iters_max, **icp_kwargs)
+        self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
+        self.failures = 0
+        
+        self.nn = nn.Sequential(
+            nn.Linear(self.emb_dims * 2, self.emb_dims // 2),
+            MyBatchNorm1d(self.emb_dims // 2),
+            nn.LeakyReLU(),
+            nn.Linear(self.emb_dims // 2, self.emb_dims // 8),
+            MyBatchNorm1d(self.emb_dims // 8),
+            nn.LeakyReLU(),
+            nn.Linear(self.emb_dims // 8, 3 if self.formula == 'diag' else 6))
+
+        # self.flow = AffineHalfFlow(0, self.emb_dims)
+
+        # self.flows = nn.Sequential(*[AffineHalfFlow(i % 2, self.emb_dims) for i in range(4)])
+
+        # self.flows = torch.tensor([AffineHalfFlow(i % 2, self.emb_dims) for i in range(4)]
+
+        # self.flow = nn.Sequential(
+        #     nn.Linear(self.emb_dims * 2, self.emb_dims // 2),
+        #     MyBatchNorm1d(self.emb_dims // 2),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(self.emb_dims // 2, self.emb_dims // 8),
+        #     MyBatchNorm1d(self.emb_dims // 8),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(self.emb_dims // 8, 3),
+        #     nn.Softplus() # TODO: is this necessasry?
+            
+        #     )
+
+    def _refine_with_icp(self, src, tgt, rotation, translation, full_icp=False):
+        batch_size = src.size()[0]
+        rotations, translations = [], []
+        icp = self.icp if full_icp else self.difficp
+        # mse = []
+
+        # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
+        for i in range(batch_size):
+            icp_init_pose = torch.eye(4, dtype=rotation.dtype, device=rotation.device)
+            icp_init_pose[:3, :3] = rotation[i]
+            icp_init_pose[:3, 3] = translation[i]
+            try:
+                pred_pose, _, _ = icp(
+                    src[i].transpose(0, 1),
+                    tgt[i].transpose(0, 1),
+                    icp_init_pose,
+                )
+                # mse.append(mse_i)
+                rotations.append(pred_pose[:3, :3])
+                translations.append(pred_pose[:3, 3])
+            except Exception as e:
+                print(e)
+                rotations.append(rotation[i])
+                translations.append(translation[i])
+                self.failures += 1
+                print(self.failures)
+        # print(f'num_iters={num_iters}')
+        return torch.stack(rotations, 0), torch.stack(translations, 0)#, mse
+
+    def forward(self, *input):
+        src = input[0]
+        tgt = input[1]
+        # debug = input[2]
+
+        src_mean = src.mean(dim=2, keepdim=True)
+        tgt_mean = tgt.mean(dim=2, keepdim=True)
+
+        # print(f'src_mean={src_mean}, shape={src_mean.shape}, ttgt_mnea={tgt_mean}, tgt_mean.shape={tgt_mean.shape}')
+
+        # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
+
+        src = (src - src_mean)
+        tgt = (tgt - tgt_mean)
+
+        # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
+
+        # print(f'src_mean={src.mean(dim=2, keepdim=True)}')
+
+        assert torch.allclose(src.mean(dim=2, keepdim=True), torch.zeros_like(src_mean, device=src_mean.device), atol=1e-6)
+        assert torch.allclose(tgt.mean(dim=2, keepdim=True), torch.zeros_like(tgt_mean, device=tgt_mean.device), atol=1e-6)
+
+        src_embedding = self.emb_nn(src)
+        tgt_embedding = self.emb_nn(tgt)
+
+        combined_embedding = torch.cat([src_embedding, tgt_embedding], 1)
+        combined_embedding = F.adaptive_max_pool1d(combined_embedding, 1).squeeze(-1)
+
+        src_embedding_p, tgt_embedding_p = self.pointer(src_embedding, tgt_embedding)
+
+        src_embedding = src_embedding + src_embedding_p
+        tgt_embedding = tgt_embedding + tgt_embedding_p
+
+        rotation_ab, tmp, mu = self.head(src_embedding, tgt_embedding, src, tgt)
+
+        translation_ab = torch.zeros_like(tmp)
+
+        # TODO: implement rotation matrix trick, that we transform the delta angles into rotation matrix.
+        # TODO: then we don't need to apply `rotation_matrix_to_euler_angles` anymore in `self.head` <- more precise + more efficient.
+        # TODO: but we lose the gaussian structure!
+
+        kl = None
+        if self.formula == 'diag':
+            log_var = self.nn(combined_embedding)
+            # log_scale = self.nn(combined_embedding)
+            std = torch.exp(0.5 * log_var)
+            z = torch.rad2deg(mu)
+            if self.training:
+                eps = torch.randn_like(std)
+                eps *= std
+                # Transform the error.
+                # eps = self.flow(eps)
+
+                # for flow in self.flows:
+                    # print(flow.device)
+                    # print(combined_embedding.device)
+                eps *= torch.exp(self.flow(combined_embedding))
+                    # eps *= torch.exp(log_scale)
+                # eps *= log_scale.exp()
+
+                # Add.
+                z += eps#torch.exp(log_scale) * (eps * std)
+
+            # Enforce positive angles <-- what if we're at pi / 2???
+            z = torch.abs(z)
+            
+            rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
+            kl = -torch.mean(0.5 * torch.sum(log_var.exp() - 1 - log_var, dim = 1), dim = 0)
+        else:
+            log_cholesky = self.nn(combined_embedding)
+            idx = torch.tensor([[0, 1, 2, 1, 2, 2],
+                                [0, 1, 2, 0, 0, 1]], dtype=torch.int64)
+            A = torch.zeros((src.shape[0], 3, 3), device=log_cholesky.device)
+
+            A[:, idx[0], idx[1]] = (0.5 * log_cholesky).exp()
+            assert A.requires_grad_
+            
+            z = torch.rad2deg(mu)
+            if self.training:
+                eps = torch.randn_like(mu)
+                assert A.shape[0] == eps.shape[0]
+                # eps = torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1) 
+                # eps *= torch.exp(self.flow(combined_embedding))
+                z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+            
+            assert z.shape == mu.shape
+            z = torch.abs(z)
+
+            rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
+
+            kl = -torch.mean(0.5 * (log_cholesky.exp().sum(dim=1) - log_cholesky[:, :3].sum(dim=1) - 3))
+
+        if self.training:
+            assert not translation_ab.requires_grad
+            rotation_ab, translation_ab = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab
+            )
+        # else:
+        #     assert not translation_ab.requires_grad
+        #     rotation_ab, translation_ab = self._refine_with_icp(
+        #         src, tgt, rotation_ab, translation_ab, full_icp=True
+        #     )
+ 
+        translation_ab = (torch.matmul(-rotation_ab, src_mean) + tgt_mean).squeeze(2)
+
+        rotation_ba = rotation_ab.transpose(2, 1).contiguous()
+        translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
+
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, kl
+
+
+
+class MyICP(nn.Module):
+    def __init__(self, args):
+        super(MyICP, self).__init__()
+        icp_kwargs = {"verbose": False}
+        self.icp = ICP6DoF(differentiable=False, **icp_kwargs)
+        
+    def _refine_with_icp(self, src, tgt):
+        batch_size = src.size()[0]
+        rotations, translations = [], []
+        icp = self.icp
+        for i in range(batch_size):
+            try:
+                pred_pose, _, _ = icp(
+                    src[i].transpose(0, 1),
+                    tgt[i].transpose(0, 1),
+                )
+                rotations.append(pred_pose[:3, :3])
+                translations.append(pred_pose[:3, 3])
+            except Exception as e:
+                print(e)
+                assert 0
+                # rotations.append(rotation[i])
+                # translations.append(translation[i])
+                self.failures += 1
+                print(self.failures)
+        return torch.stack(rotations, 0), torch.stack(translations, 0)
+
+    def forward(self, *input):
+        src = input[0]
+        tgt = input[1]
+
+        rotation_ab, translation_ab = self._refine_with_icp(
+            src, tgt
+        )
+
+        rotation_ba = rotation_ab.transpose(2, 1).contiguous()
+        translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
+
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0

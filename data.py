@@ -59,8 +59,13 @@ def jitter_pointcloud(pointcloud, sigma=0.01, clip=0.05):
 
 
 class ModelNet40(Dataset):
-    def __init__(self, num_points, partition='train', gaussian_noise=False, unseen=False, factor=4):
+    def __init__(self, num_points, partition='train', gaussian_noise=False, unseen=False, factor=4, data_size=None):
         self.data, self.label = load_data(partition)
+
+        if data_size is not None:
+            self.data = self.data[:data_size]
+            self.label = self.label[:data_size]
+
         self.num_points = num_points
         self.partition = partition
         self.gaussian_noise = gaussian_noise
@@ -78,8 +83,9 @@ class ModelNet40(Dataset):
 
     def __getitem__(self, item):
         pointcloud = self.data[item][:self.num_points]
-        if self.gaussian_noise:
-            pointcloud = jitter_pointcloud(pointcloud)
+        # if self.gaussian_noise:
+        #     pointcloud = jitter_pointcloud(pointcloud)
+        
         if self.partition != 'train':
             np.random.seed(item)
         anglex = np.random.uniform() * np.pi / self.factor
@@ -112,6 +118,10 @@ class ModelNet40(Dataset):
         rotation_ab = Rotation.from_euler('zyx', [anglez, angley, anglex])
         pointcloud2 = rotation_ab.apply(pointcloud1.T).T + np.expand_dims(translation_ab, axis=1)
 
+        # if self.gaussian_noise:
+        #     pointcloud1 = jitter_pointcloud(pointcloud1)
+        #     pointcloud2 = jitter_pointcloud(pointcloud2)
+        
         euler_ab = np.asarray([anglez, angley, anglex])
         euler_ba = -euler_ab[::-1]
 
