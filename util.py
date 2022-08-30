@@ -31,7 +31,7 @@ def quat2mat(quat):
 
 
 def transform_point_cloud(point_cloud, rotation, translation):
-    if len(rotation.size()) == 2:
+    if len(rotation.size()) != 2 and len(point_cloud.size()) != 3:
         rot_mat = quat2mat(rotation)
     else:
         rot_mat = rotation

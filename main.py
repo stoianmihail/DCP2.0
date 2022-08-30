@@ -14,11 +14,15 @@ from torch.optim.lr_scheduler import MultiStepLR
 from data import ModelNet40
 from model import DCP, DCP_DiffICP, DCP_plus_plus
 from util import transform_point_cloud, npmat2euler
+from difficp.utils.geometry_utils import transform_points_by_matrix
 import numpy as np
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
+import open3d as o3d
+from difficp import ICP6DoF
 
 # Part of the code is referred from: https://github.com/floodsung/LearningToCompare_FSL
 
@@ -47,8 +51,10 @@ def _init_(args):
     os.system('cp data.py checkpoints' + '/' + args.exp_name + '/' + 'data.py.backup')
 
 
-def test_one_epoch(args, net, test_loader):
+def test_one_epoch(args, net, test_loader, sampling_nr, net_dcp = None):
     net.eval()
+    # if net_dcp is not None:
+    #     net_dcp.eval()
     mse_ab = 0
     mae_ab = 0
     mse_ba = 0
@@ -61,6 +67,9 @@ def test_one_epoch(args, net, test_loader):
     rotations_ab = []
     translations_ab = []
     rotations_ab_pred = []
+    rotations_ab_pred_true = []
+    rotations_ab_pred_dcp = []
+    rotations_ab_pred_dcp_true = []
     translations_ab_pred = []
 
     rotations_ba = []
@@ -71,7 +80,7 @@ def test_one_epoch(args, net, test_loader):
     eulers_ab = []
     eulers_ba = []
 
-    for src, target, rotation_ab, translation_ab, rotation_ba, translation_ba, euler_ab, euler_ba in tqdm(test_loader):
+    for src, target, rotation_ab, translation_ab, rotation_ba, translation_ba, euler_ab, euler_ba, item in tqdm(test_loader):
         src = src.cuda()
         target = target.cuda()
         rotation_ab = rotation_ab.cuda()
@@ -81,12 +90,31 @@ def test_one_epoch(args, net, test_loader):
 
         batch_size = src.size(0)
         num_examples += batch_size
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_divergence = net(src, target)
+        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred, kl_divergence, rotation_ab_pred_true = net(src, target, sampling_nr, euler_ab.numpy())
+        if args.model == 'both':
+            rotation_ab_pred_dcp, _, _, _, _, rotation_ab_pred_dcp_true = net_dcp(src, target, sampling_nr, euler_ab.numpy())
+            # rotation_ab_pred_mse = rotation_ab_pred.detach().cpu().numpy()
+            # rotation_ab_pred_mse = npmat2euler(rotation_ab_pred_mse)
+            # rotation_ab_pred_dcp_mse = rotation_ab_pred_dcp.detach().cpu().numpy()
+            # rotation_ab_pred_dcp_mse = npmat2euler(rotation_ab_pred_dcp_mse)
+            # f = open("./checkpoints/try.txt", "a")
+            # for i in range(args.test_batch_size):
+            #     mse_loss_i = np.mean((rotation_ab_pred_mse[i] - np.degrees(euler_ab.numpy()[i])) ** 2)
+            #     mse_loss_i_dcp = np.mean((rotation_ab_pred_dcp_mse[i] - np.degrees(euler_ab.numpy()[i])) ** 2)
+            #     if mse_loss_i_dcp > 1 and mse_loss_i < mse_loss_i_dcp:
+            #         print(f'mse_loss: {mse_loss_i}, mse_loss_dcp: {mse_loss_i_dcp}, item: {item[i]}')
+            #         f.write(f'mse_loss: {mse_loss_i}, mse_loss_dcp: {mse_loss_i_dcp}, item: {item[i]} \n')
+            # f.close()
+        
 
         ## save rotation and translation
         rotations_ab.append(rotation_ab.detach().cpu().numpy())
         translations_ab.append(translation_ab.detach().cpu().numpy())
         rotations_ab_pred.append(rotation_ab_pred.detach().cpu().numpy())
+        if args.model == 'both':
+            rotations_ab_pred_dcp.append(rotation_ab_pred_dcp.detach().cpu().numpy())
+            rotations_ab_pred_dcp_true.append(rotation_ab_pred_dcp_true)
+        rotations_ab_pred_true.append(rotation_ab_pred_true)
         translations_ab_pred.append(translation_ab_pred.detach().cpu().numpy())
         eulers_ab.append(euler_ab.numpy())
         ##
@@ -106,7 +134,7 @@ def test_one_epoch(args, net, test_loader):
         if args.model == 'dcp' or args.model == 'difficp':
             loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) \
                 + F.mse_loss(translation_ab_pred, translation_ab)
-        elif args.model == 'dcp++':
+        elif args.model == 'dcp++' or args.model == 'both':
             loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity) - kl_divergence
         assert loss is not None
     
@@ -137,6 +165,10 @@ def test_one_epoch(args, net, test_loader):
     rotations_ab = np.concatenate(rotations_ab, axis=0)
     translations_ab = np.concatenate(translations_ab, axis=0)
     rotations_ab_pred = np.concatenate(rotations_ab_pred, axis=0)
+    rotations_ab_pred_true = np.concatenate(rotations_ab_pred_true, axis=0)
+    if args.model == "both":
+        rotations_ab_pred_dcp = np.concatenate(rotations_ab_pred_dcp, axis=0)
+        rotations_ab_pred_dcp_true = np.concatenate(rotations_ab_pred_dcp_true, axis=0)
     translations_ab_pred = np.concatenate(translations_ab_pred, axis=0)
 
     rotations_ba = np.concatenate(rotations_ba, axis=0)
@@ -151,7 +183,7 @@ def test_one_epoch(args, net, test_loader):
            mse_ab * 1.0 / num_examples, mae_ab * 1.0 / num_examples, \
            mse_ba * 1.0 / num_examples, mae_ba * 1.0 / num_examples, rotations_ab, \
            translations_ab, rotations_ab_pred, translations_ab_pred, rotations_ba, \
-           translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba
+           translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba, rotations_ab_pred_true, rotations_ab_pred_dcp, rotations_ab_pred_dcp_true
 
 
 def train_one_epoch(args, net, train_loader, opt):
@@ -265,18 +297,68 @@ def train_one_epoch(args, net, train_loader, opt):
            translations_ba, rotations_ba_pred, translations_ba_pred, eulers_ab, eulers_ba
 
 
-def test(args, net, test_loader, boardio, textio):
+def test(args, net, test_loader, boardio, textio, net_dcp = None):
+    repeat = 5
+    x = [0, 1, 3, 5, 10, 20, 50, 100]
+    # repeat = 1
+    # x = [0]
+    y = []
+    y_true = []
+    y_dcp = []
+    y_dcp_true = []
+    for i in x:
+        total = 0
+        total_true = 0
+        total_dcp = 0
+        total_dcp_true = 0
+        for j in range(repeat):
+            test_kl_loss, test_loss, test_cycle_loss, \
+            test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
+            test_rotations_ab_pred, \
+            test_translations_ab_pred, test_rotations_ba, test_translations_ba, test_rotations_ba_pred, \
+            test_translations_ba_pred, test_eulers_ab, test_eulers_ba, test_rotations_ab_pred_euler_true, \
+            test_rotations_ab_pred_dcp, test_rotations_ab_pred_dcp_euler_true = test_one_epoch(args, net, test_loader, i, net_dcp)
+            test_rmse_ab = np.sqrt(test_mse_ab)
+            test_rmse_ba = np.sqrt(test_mse_ba)
 
-    test_kl_loss, test_loss, test_cycle_loss, \
-    test_mse_ab, test_mae_ab, test_mse_ba, test_mae_ba, test_rotations_ab, test_translations_ab, \
-    test_rotations_ab_pred, \
-    test_translations_ab_pred, test_rotations_ba, test_translations_ba, test_rotations_ba_pred, \
-    test_translations_ba_pred, test_eulers_ab, test_eulers_ba = test_one_epoch(args, net, test_loader)
-    test_rmse_ab = np.sqrt(test_mse_ab)
-    test_rmse_ba = np.sqrt(test_mse_ba)
+            test_rotations_ab_pred_euler = npmat2euler(test_rotations_ab_pred)
+            # test_rotations_ab_pred_euler_true = npmat2euler(test_rotations_ab_pred_true)
+            
+            test_r_mse_ab = np.mean((test_rotations_ab_pred_euler - np.degrees(test_eulers_ab)) ** 2)
+            true_mse = np.mean((test_rotations_ab_pred_euler_true - np.degrees(test_eulers_ab)) ** 2)
+            if args.model == "both":
+                test_rotations_ab_pred_dcp_euler = npmat2euler(test_rotations_ab_pred_dcp)
+                dcp_r_mse = np.mean((test_rotations_ab_pred_dcp_euler - np.degrees(test_eulers_ab)) ** 2)
+                dcp_true_mse = np.mean((test_rotations_ab_pred_dcp_euler_true - np.degrees(test_eulers_ab)) ** 2)
+                print(f"sampling_nr: {i}, repeat_nr: {j}, dcp_r_mse: {dcp_r_mse}, dcp_true: {dcp_true_mse}, ours_r_mse: {test_r_mse_ab}, true_r_mse: {true_mse} ")
+                total_dcp += dcp_r_mse
+                total_dcp_true += dcp_true_mse
+            else:
+                print(f"sampling_nr: {i}, repeat_nr: {j}, ours_r_mse: {test_r_mse_ab}, true_r_mse: {true_mse} ")
+            total += test_r_mse_ab
+            total_true += true_mse      
+        y.append(total / repeat)
+        y_true.append(total_true / repeat)
+        y_dcp.append(total_dcp / repeat)
+        y_dcp_true.append(total_dcp_true / repeat)
+    np.save(f'./checkpoints/sampling/y_{args.formula}_{x}_{repeat}.npy', np.array(y))
+    np.save(f'./checkpoints/sampling/y_{args.formula}_true_{x}_{repeat}.npy', np.array(y_true))
+    if args.model == "both":
+        np.save(f'./checkpoints/sampling/y_dcp_{x}_{repeat}.npy', np.array(y_dcp))
+        np.save(f'./checkpoints/sampling/y_dcp_true_{x}_{repeat}.npy', np.array(y_dcp_true))
+        plt.plot(x, y_dcp, 'r')
+        plt.plot(x, y_dcp_true, 'g')
+    plt.plot(x, y, 'k')
+    plt.plot(x, y_true, 'b')
+    plt.xlabel('#Samples')
+    plt.ylabel('Rotation MSE')
+    if args.model == "both":
+        plt.legend(['DCP: our sampling strategy', 'DCP: optimal sampling strategy', 'DCP++: our sampling strategy', 'DCP++: optimal sampling strategy'])
+    else:
+        plt.legend(['DCP++: our random sampling strategy', 'DCP++: optimal random sampling strategy'])
 
-    test_rotations_ab_pred_euler = npmat2euler(test_rotations_ab_pred)
-    test_r_mse_ab = np.mean((test_rotations_ab_pred_euler - np.degrees(test_eulers_ab)) ** 2)
+    plt.savefig(f"./checkpoints/sampling/two_curves_{args.formula}_{x}_{repeat}.png")
+
     test_r_rmse_ab = np.sqrt(test_r_mse_ab)
     test_r_mae_ab = np.mean(np.abs(test_rotations_ab_pred_euler - np.degrees(test_eulers_ab)))
     test_t_mse_ab = np.mean((test_translations_ab - test_translations_ab_pred) ** 2)
@@ -311,11 +393,12 @@ def train(args, net, train_loader, test_loader, boardio, textio):
         opt = optim.SGD(net.parameters(), lr=args.lr * 100, momentum=args.momentum, weight_decay=1e-4)
     else:
         print("Use Adam")
+        if args.model == 'dcp':
+            opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=1e-4)
+        else:
+            opt = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
         # if args.model == 'dcp':
-        #     opt = optim.Adam(net.parameters(), lr=args.lr, weight_decay=1e-4)
-        # else:
-        #     opt = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
-        opt = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+        # opt = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = None
     if args.model == 'dcp++' or args.model == 'difficp':
         # Worked pretty well with this setting.
@@ -556,12 +639,12 @@ def main():
     parser.add_argument('--data_size', type=int, default=None, metavar='N',
                         help='Data size')
     parser.add_argument('--formula', type=str, default='cov', metavar='N',
-                        choices = ['diag', 'cov'],
+                        choices = ['diag', 'cov', 'random'],
                         help='Formula')    
     parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
                         help='Name of the experiment')
     parser.add_argument('--model', type=str, default='dcp', metavar='N',
-                        choices=['dcp', 'dcp++', 'difficp'],
+                        choices=['dcp', 'dcp++', 'difficp', 'both', 'visualize'],
                         help='Model to use, [dcp]')
     parser.add_argument('--emb_nn', type=str, default='pointnet', metavar='N',
                         choices=['pointnet', 'dgcnn'],
@@ -588,6 +671,8 @@ def main():
                         help='Size of batch)')
     parser.add_argument('--epochs', type=int, default=250, metavar='N',
                         help='number of episode to train ')
+    parser.add_argument('--applying', type=int, default=0, metavar='N',
+                        help='which to apply: [nothing, icp, dcp, dcp++]')
     parser.add_argument('--use_sgd', action='store_true', default=False,
                         help='Use SGD')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
@@ -614,6 +699,8 @@ def main():
                         help='Divided factor for rotations')
     parser.add_argument('--model_path', type=str, default='', metavar='N',
                         help='Pretrained model path')
+    parser.add_argument('--item', type=str, default="train:0", metavar='N',
+                        help="Examples: 'train:11' or 'val:113'")
 
     args = parser.parse_args()
     torch.backends.cudnn.deterministic = True
@@ -646,30 +733,147 @@ def main():
         net = DCP_plus_plus(args).cuda()
     elif args.model == 'difficp':
         net = DCP_DiffICP(args).cuda()
+    elif args.model == 'both':
+        net_dcp = DCP(args).cuda()
+        net = DCP_plus_plus(args).cuda()
+    elif args.model == 'visualize':
+        test_visualizing(test_loader, args)
+        return
     else:
         raise Exception(f'Model {args.model} not implemented')
         
     if args.eval:
         if args.model_path == '':
             model_path = 'checkpoints' + '/' + args.exp_name + '/models/model.best.t7'
+            if args.model == 'both':
+                model_path_dcp = 'checkpoints/dcp_v1_replicate/models/model.best.t7'
         else:
             model_path = args.model_path
             print(model_path)
+        if args.model == "both" and not os.path.exists(model_path_dcp):
+            print("can't find pretrained model")
+            return
         if not os.path.exists(model_path):
             print("can't find pretrained model")
             return
+        else:
+            print("FOUND")
         net.load_state_dict(torch.load(model_path), strict=False)
+        if args.model == 'both':
+            net_dcp.load_state_dict(torch.load(model_path_dcp), strict=False)
     if torch.cuda.device_count() > 1:
         net = nn.DataParallel(net)
+        if args.model == 'both':
+            net_dcp = nn.DataParallel(net_dcp)
         print("Let's use", torch.cuda.device_count(), "GPUs!")
     if args.eval:
-        test(args, net, test_loader, boardio, textio)
+        if args.model == 'both':
+            test(args, net, test_loader, boardio, textio, net_dcp)
+        else:
+            test(args, net, test_loader, boardio, textio)
     else:
         train(args, net, train_loader, test_loader, boardio, textio)
 
 
     print('FINISH')
     boardio.close()
+
+def test_visualizing(test_loader, args):
+    print(f'args={args}, item={args.item}, noise={args.gaussian_noise}, applying:{args.applying}')
+    item = args.item
+    assert len(args.item.split(':')) == 2
+    partition, item = args.item.split(':')
+    assert partition in ['train', 'val']
+    # dataset = data.dataset_train if partition == 'train' else data.dataset_val
+    # dataset = data #by default feeding in the val one
+    # dataset = ModelNet40(num_points=args.num_points, partition='test', gaussian_noise=args.gaussian_noise,
+    #                    unseen=args.unseen, factor=args.factor, data_size=args.data_size)
+    # print(len(dataset))
+    # assert int(item) < len(dataset)
+    item = int(item)
+    for src, target, _, _, _, _, _, _, items in tqdm(test_loader):
+        if item in items:
+            pointcloud_s = src
+            print(f"Shape: {pointcloud_s.shape}")
+            pointcloud_t = target
+            item = (items == item).nonzero(as_tuple=True)[0]
+            print(items)
+            print(item)
+            break
+    # list_alternating = [4, 15, 20, 117, 27, 40, 423, 37, 62, 503, 38, 82, 506, 51, 100, 593, 81, 114, 680, 90, 200, 703, 96, 222, 732, 102, 350, 746, 112, 500, 777, 113, 515, 827, 144, 535, 888, 190, 565, 953, 352, 888, 966, 971, 900]
+    # list_alternating = [844]
+    # print(list_alternating)
+    # print(f"len_list: {len(list_alternating)}")
+    # for item in list_alternating:
+    # all_data     = dataset[int(item)]
+    # pointcloud_s = all_data[0].T #0: source
+    # pointcloud_t = all_data[1].T #1: target
+    
+    applying = [nothing, icp, dcp, dcppp]
+    applying = applying[args.applying]
+    # for applying in [nothing, icp, dcp, dcp]:
+    print(f"applying: {applying}")
+    pointcloud_s_a, pointcloud_t_a = applying(pointcloud_s, pointcloud_t, args, item)
+    # print(pointcloud_s_a.shape)
+    pcd_s = o3d.geometry.PointCloud()
+    pcd_s.points = o3d.utility.Vector3dVector(pointcloud_s_a)
+
+    pcd_t = o3d.geometry.PointCloud()
+    pcd_t.points = o3d.utility.Vector3dVector(pointcloud_t_a)
+
+    if applying != nothing:
+        pcd_s.paint_uniform_color([0.9, 0.1, 0.1])
+        pcd_t.paint_uniform_color([0.1, 0.9, 0.1])
+    else:
+        pcd_t.paint_uniform_color([0.1, 0.1, 0.9])
+        pcd_s.paint_uniform_color([0.1, 0.9, 0.1])
+
+    o3d.visualization.draw_geometries([pcd_s, pcd_t])
+
+def nothing(data_1, data_2, args, item):
+    return data_1[item].squeeze().numpy().T, data_2[item].squeeze().numpy().T
+
+def icp(source, target, args, item):
+    icp_kwargs = {"verbose": False}
+    icp_apply = ICP6DoF(differentiable=False, **icp_kwargs)
+    # source = source.cuda()
+    # source = source[item].squeeze()
+    # target = target[item].squeeze()
+    rotations = []
+    translations = []
+    for i in range(source.size()[0]): 
+        pred_pose = icp_apply(source[i].squeeze().transpose(0, 1), target[i].squeeze().transpose(0, 1))[0]
+        rotations.append(pred_pose[:3, :3])
+        translations.append(pred_pose[:3, 3])
+    rotations, translations = torch.stack(rotations, 0), torch.stack(translations, 0)
+    source = transform_point_cloud(source, rotations, translations)[item].numpy().T
+    return source, target[item].squeeze().T
+
+def dcp(source, target, args, item):
+    net = DCP(args).cuda()
+    model_path_dcp = 'checkpoints/dcp_v1_replicate/models/model.best.t7'
+    net.load_state_dict(torch.load(model_path_dcp), strict=False)
+    net = nn.DataParallel(net)
+    net.eval()
+    # rotations, translations, _, _, _, _ = net(source, target, 0, [0 for i in range(10)])
+    # source = transform_point_cloud(source.cpu(), rotations.cpu(), translations.cpu())[item].detach().numpy().T
+    # return source, target[item].squeeze().T
+    _, _, rotations, translations, _, _ = net(source, target, 0, [0 for i in range(10)])
+    target = transform_point_cloud(target.cpu(), rotations.cpu(), translations.cpu())[item].detach().numpy().T
+    return source[item].squeeze().T, target
+
+def dcppp(source, target, args, item):
+    net = DCP_plus_plus(args).cuda()
+    model_path_dcppp = 'checkpoints/dcp++_adamw_formula=cov_data_size=full-e2/models/model.best.t7'
+    net.load_state_dict(torch.load(model_path_dcppp), strict=False)
+    net = nn.DataParallel(net)
+    net.eval()
+    # rotations, translations, _, _, _, _ = net(source, target, 0, [0 for i in range(10)])
+    # source = transform_point_cloud(source.cpu(), rotations.cpu(), translations.cpu())[item].detach().numpy().T
+    # return source, target[item].squeeze().T
+    _, _, rotations, translations, _, _ = net(source, target, 0, [0 for i in range(10)])
+    target = transform_point_cloud(target.cpu(), rotations.cpu(), translations.cpu())[item].detach().numpy().T
+    return source[item].squeeze().T, target
 
 
 if __name__ == '__main__':

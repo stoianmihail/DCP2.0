@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from util import quat2mat
+from util import quat2mat, npmat2euler
 from hypericp import torch_compute_components_already_centered
 
 from difficp import ICP6DoF
@@ -466,7 +466,7 @@ class DCP(nn.Module):
         batch_size = src.size()[0]
         rotations, translations = [], []
         icp = self.icp if full_icp else self.difficp
-        # mse = []
+        mse = []
 
         # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
         for i in range(batch_size):
@@ -474,26 +474,29 @@ class DCP(nn.Module):
             icp_init_pose[:3, :3] = rotation[i]
             icp_init_pose[:3, 3] = translation[i]
             try:
-                pred_pose, _, _ = icp(
+                pred_pose, _, mse_i = icp(
                     src[i].transpose(0, 1),
                     tgt[i].transpose(0, 1),
                     icp_init_pose,
                 )
-                # mse.append(mse_i)
+                mse.append(mse_i)
                 rotations.append(pred_pose[:3, :3])
                 translations.append(pred_pose[:3, 3])
             except Exception as e:
                 print(e)
+                mse.append(100)
                 rotations.append(rotation[i])
                 translations.append(translation[i])
                 self.failures += 1
                 print(self.failures)
         # print(f'num_iters={num_iters}')
-        return torch.stack(rotations, 0), torch.stack(translations, 0)#, mse
+        return torch.stack(rotations, 0), torch.stack(translations, 0), mse
 
     def forward(self, *input):
         src = input[0]
         tgt = input[1]
+        sampling_nr = input[2]
+        euler_ab = input[3]
         src_embedding = self.emb_nn(src)
         tgt_embedding = self.emb_nn(tgt)
 
@@ -502,19 +505,49 @@ class DCP(nn.Module):
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
+        rotation_ab, translation_ab, mu = self.head(src_embedding, tgt_embedding, src, tgt)
+        if not self.training:
+            z = torch.rad2deg(mu)
+            best_loss, best_z, true_loss, rotation_ab_true = [None for _ in range(z.shape[0])], torch.zeros_like(z), [None for _ in range(z.shape[0])], np.zeros_like(z.detach().cpu())
+            for i in range(sampling_nr + 1):
+                eps = torch.randn_like(mu)
+                if i == 0:
+                    z_i = torch.abs(z)
+                else:
+                    z_i = z + eps
+                    z_i = torch.abs(z_i)
+                rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z_i), "zyx")
+                rotations_icp, _, loss_i = self._refine_with_icp(
+                    src, tgt, rotation_ab, translation_ab, full_icp=True
+                )
+                for i in range(z.shape[0]):
+                    if best_loss[i] is None or best_loss[i] > loss_i[i]:
+                        best_z[i], best_loss[i] = z_i[i], loss_i[i]
+                
+                rotations_icp = rotations_icp.detach().cpu().numpy()
+                rotations_icp_euler = npmat2euler(rotations_icp)
+                for i in range(z.shape[0]):
+                    mse_loss_i = np.mean((rotations_icp_euler[i] - np.degrees(euler_ab[i])) ** 2)
+                    if true_loss[i] is None or true_loss[i] > mse_loss_i:
+                        rotation_ab_true[i], true_loss[i] = rotations_icp_euler[i], mse_loss_i
 
-        # if not self.training:
-        #     rotation_ab, translation_ab = self._refine_with_icp(
-        #         src, tgt, rotation_ab, translation_ab, full_icp=True
-        #     )
+            z = torch.abs(best_z)
+
+            rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
+        else:
+            rotation_ab_true = np.zeros_like(rotation_ab.detach().cpu())
+
+        if not self.training:
+            rotation_ab, translation_ab, _ = self._refine_with_icp(
+                src, tgt, rotation_ab, translation_ab, full_icp=True
+            )
            
         if self.cycle:
             rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
         else:
             rotation_ba = rotation_ab.transpose(2, 1).contiguous()
             translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
-        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0, rotation_ab_true
 
 class DCP_DiffICP(nn.Module):
     def __init__(self, args):
@@ -759,7 +792,7 @@ class DCP_plus_plus(nn.Module):
         batch_size = src.size()[0]
         rotations, translations = [], []
         icp = self.icp if full_icp else self.difficp
-        # mse = []
+        mse = []
 
         # print(f'src.shape={src.shape}, tgt.shape={tgt.shape}')
         for i in range(batch_size):
@@ -767,26 +800,29 @@ class DCP_plus_plus(nn.Module):
             icp_init_pose[:3, :3] = rotation[i]
             icp_init_pose[:3, 3] = translation[i]
             try:
-                pred_pose, _, _ = icp(
+                pred_pose, _, mse_i = icp(
                     src[i].transpose(0, 1),
                     tgt[i].transpose(0, 1),
                     icp_init_pose,
                 )
-                # mse.append(mse_i)
+                mse.append(mse_i)
                 rotations.append(pred_pose[:3, :3])
                 translations.append(pred_pose[:3, 3])
             except Exception as e:
                 print(e)
+                mse.append(100)
                 rotations.append(rotation[i])
                 translations.append(translation[i])
                 self.failures += 1
                 print(self.failures)
         # print(f'num_iters={num_iters}')
-        return torch.stack(rotations, 0), torch.stack(translations, 0)#, mse
+        return torch.stack(rotations, 0), torch.stack(translations, 0), mse
 
     def forward(self, *input):
         src = input[0]
         tgt = input[1]
+        sampling_nr = input[2]
+        euler_ab = input[3]
         # debug = input[2]
 
         src_mean = src.mean(dim=2, keepdim=True)
@@ -825,7 +861,7 @@ class DCP_plus_plus(nn.Module):
         # TODO: then we don't need to apply `rotation_matrix_to_euler_angles` anymore in `self.head` <- more precise + more efficient.
         # TODO: but we lose the gaussian structure!
 
-        kl = None
+        # kl = None
         if self.formula == 'diag':
             log_var = self.nn(combined_embedding)
             # log_scale = self.nn(combined_embedding)
@@ -852,7 +888,7 @@ class DCP_plus_plus(nn.Module):
             
             rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
             kl = -torch.mean(0.5 * torch.sum(log_var.exp() - 1 - log_var, dim = 1), dim = 0)
-        else:
+        elif self.formula == 'cov':
             log_cholesky = self.nn(combined_embedding)
             idx = torch.tensor([[0, 1, 2, 1, 2, 2],
                                 [0, 1, 2, 0, 0, 1]], dtype=torch.int64)
@@ -868,6 +904,30 @@ class DCP_plus_plus(nn.Module):
                 # eps = torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1) 
                 # eps *= torch.exp(self.flow(combined_embedding))
                 z += torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+            else:
+                best_loss, best_z, true_loss, rotation_ab_true = [None for _ in range(z.shape[0])], torch.zeros_like(z), [None for _ in range(z.shape[0])], np.zeros_like(z.detach().cpu())
+                for i in range(sampling_nr + 1):
+                    eps = torch.randn_like(mu)
+                    if i == 0:
+                        z_i = torch.abs(z)
+                    else:
+                        z_i = z + torch.bmm(A, eps.unsqueeze(-1)).squeeze(-1)
+                        z_i = torch.abs(z_i)
+                    rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z_i), "zyx")
+                    rotations_icp, _, loss_i = self._refine_with_icp(
+                        src, tgt, rotation_ab, translation_ab, full_icp=True
+                    )
+                    for i in range(z.shape[0]):
+                        if best_loss[i] is None or best_loss[i] > loss_i[i]:
+                            best_z[i], best_loss[i] = z_i[i], loss_i[i]
+
+                    rotations_icp = rotations_icp.detach().cpu().numpy()
+                    rotations_icp_euler = npmat2euler(rotations_icp)
+                    for i in range(z.shape[0]):
+                        mse_loss_i = np.mean((rotations_icp_euler[i] - np.degrees(euler_ab[i])) ** 2)
+                        if true_loss[i] is None or true_loss[i] > mse_loss_i:
+                            rotation_ab_true[i], true_loss[i] = rotations_icp_euler[i], mse_loss_i
+                z = best_z
             
             assert z.shape == mu.shape
             z = torch.abs(z)
@@ -875,15 +935,43 @@ class DCP_plus_plus(nn.Module):
             rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
 
             kl = -torch.mean(0.5 * (log_cholesky.exp().sum(dim=1) - log_cholesky[:, :3].sum(dim=1) - 3))
+        else:
+            z = torch.rad2deg(mu)
+            best_loss, best_z, true_loss, rotation_ab_true = [None for _ in range(z.shape[0])], torch.zeros_like(z), [None for _ in range(z.shape[0])], np.zeros_like(z.detach().cpu())
+            for i in range(sampling_nr + 1):
+                eps = torch.randn_like(mu)
+                if i == 0:
+                    z_i = torch.abs(z)
+                else:
+                    z_i = z + eps
+                    z_i = torch.abs(z_i)
+                rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z_i), "zyx")
+                rotations_icp, _, loss_i = self._refine_with_icp(
+                    src, tgt, rotation_ab, translation_ab, full_icp=True
+                )
+                for i in range(z.shape[0]):
+                    if best_loss[i] is None or best_loss[i] > loss_i[i]:
+                        best_z[i], best_loss[i] = z_i[i], loss_i[i]
+                
+                rotations_icp = rotations_icp.detach().cpu().numpy()
+                rotations_icp_euler = npmat2euler(rotations_icp)
+                for i in range(z.shape[0]):
+                    mse_loss_i = np.mean((rotations_icp_euler[i] - np.degrees(euler_ab[i])) ** 2)
+                    if true_loss[i] is None or true_loss[i] > mse_loss_i:
+                        rotation_ab_true[i], true_loss[i] = rotations_icp_euler[i], mse_loss_i
+
+            z = torch.abs(best_z)
+
+            rotation_ab = euler_angles_to_rotation_matrix(torch.deg2rad(z), "zyx")
 
         if self.training:
             assert not translation_ab.requires_grad
-            rotation_ab, translation_ab = self._refine_with_icp(
+            rotation_ab, translation_ab, _ = self._refine_with_icp(
                 src, tgt, rotation_ab, translation_ab
             )
         else:
             assert not translation_ab.requires_grad
-            rotation_ab, translation_ab = self._refine_with_icp(
+            rotation_ab, translation_ab, _ = self._refine_with_icp(
                 src, tgt, rotation_ab, translation_ab, full_icp=True
             )
  
@@ -892,4 +980,4 @@ class DCP_plus_plus(nn.Module):
         rotation_ba = rotation_ab.transpose(2, 1).contiguous()
         translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
 
-        return rotation_ab, translation_ab, rotation_ba, translation_ba, kl
+        return rotation_ab, translation_ab, rotation_ba, translation_ba, 0, rotation_ab_true
