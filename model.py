@@ -504,10 +504,10 @@ class DCP(nn.Module):
 
         rotation_ab, translation_ab, _ = self.head(src_embedding, tgt_embedding, src, tgt)
 
-        if not self.training:
-            rotation_ab, translation_ab = self._refine_with_icp(
-                src, tgt, rotation_ab, translation_ab, full_icp=True
-            )
+        # if not self.training:
+        #     rotation_ab, translation_ab = self._refine_with_icp(
+        #         src, tgt, rotation_ab, translation_ab, full_icp=True
+        #     )
            
         if self.cycle:
             rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
